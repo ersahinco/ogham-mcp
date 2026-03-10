@@ -21,7 +21,12 @@ postgres = [
 ]
 mistral = ["mistralai>=1.0"]
 voyage = ["voyageai>=0.3"]
-all = ["mistralai>=1.0", "voyageai>=0.3"]
+all = [
+    "psycopg-pool>=3.1",
+    "psycopg[binary]>=3.1",
+    "mistralai>=1.0",
+    "voyageai>=0.3",
+]
 
 [project.scripts]
 ogham = "ogham.cli:main"
