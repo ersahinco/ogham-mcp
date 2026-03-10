@@ -29,7 +29,6 @@ htmlcov/
 .mcp*.json
 
 # UV
-.python-version
 
 # Docker
 .worktrees/
