@@ -1,51 +1,82 @@
 # Ogham MCP
 
-*Ogham* (pronounced "OH-um") — persistent, searchable shared memory for AI coding agents. Works across clients.
+*Ogham* (pronounced "OH-um") -- persistent, searchable shared memory for AI coding agents. Works across clients.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fogham--mcp%2Fogham--mcp-blue)](https://github.com/ogham-mcp/ogham-mcp/pkgs/container/ogham-mcp)
 
 ## The problem
 
-AI coding agents forget everything between sessions. Switch from Claude Code to Cursor to Kiro to OpenCode and context is lost. Decisions, gotchas, architectural patterns — all gone. You end up repeating yourself, re-explaining your codebase, re-debugging the same issues.
+AI coding agents forget everything between sessions. Switch from Claude Code to Cursor to Kiro to OpenCode and context is lost. Decisions, gotchas, architectural patterns -- gone. You end up repeating yourself, re-explaining your codebase, re-debugging the same issues.
 
 Ogham gives your agents a shared memory that persists across sessions and clients.
 
 ## Quick start
 
-### 1. Set up Supabase
+### 1. Set up your database
 
-Create a free project at [supabase.com](https://supabase.com). Run `sql/schema.sql` in the SQL editor.
+**Supabase** (free tier works): create a project at [supabase.com](https://supabase.com), then run `sql/schema.sql` in the SQL editor.
 
-### 2. Install and configure
+**Postgres** (Neon, self-hosted, etc.): run `sql/schema_postgres.sql` against your database. Needs PostgreSQL 15+ with pgvector.
+
+### 2. Install
 
 ```bash
-# Claude Code (one command)
+# From PyPI (recommended)
 claude mcp add ogham -- uvx ogham-mcp
 
-# Set environment variables
+# Before PyPI publish, install from GitHub
+uvx --from git+https://github.com/ogham-mcp/ogham-mcp.git ogham init
+claude mcp add ogham -- uvx --from git+https://github.com/ogham-mcp/ogham-mcp.git ogham-serve
+```
+
+The `ogham init` wizard walks you through database setup, embedding provider, and writes MCP client configs. Run it before adding the server to your client.
+
+### 3. Configure
+
+```bash
+# Supabase
 export SUPABASE_URL=https://your-project.supabase.co
 export SUPABASE_KEY=your-service-role-key
 export EMBEDDING_PROVIDER=openai  # or ollama, mistral, voyage
 export OPENAI_API_KEY=sk-...      # for your chosen provider
+
+# Or Postgres (Neon, self-hosted)
+export DATABASE_BACKEND=postgres
+export DATABASE_URL=postgresql://user:pass@host/db
+export EMBEDDING_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
 ```
 
-### 3. Use it
+Or skip the manual setup and run the interactive wizard:
 
-Your agent now has persistent memory. Store decisions, search for context, build a knowledge graph — all through natural conversation.
+```bash
+ogham init
+```
+
+It walks you through database connection, embedding provider, schema migration, and writes MCP client configs for Claude Code, Cursor, VS Code, and others.
+
+### 4. Use it
+
+Tell your agent to remember something, then ask about it later -- from the same client or a different one. It works because they all hit the same database.
 
 ## Installation methods
 
-| Method | Command | Best for |
-|--------|---------|----------|
-| **uvx** (recommended) | `claude mcp add ogham -- uvx ogham-mcp` | Claude Code, quick setup |
-| **Docker** | `docker pull ghcr.io/ogham-mcp/ogham-mcp` | Self-hosted, isolation |
+| Method | Command | When to use |
+|--------|---------|-------------|
+| **uvx** (recommended) | `uvx ogham-mcp` | PyPI is published, quick setup |
+| **uvx from GitHub** | `uvx --from git+https://github.com/ogham-mcp/ogham-mcp.git ogham-serve` | Before PyPI, testing from source |
+| **Docker** | `docker pull ghcr.io/ogham-mcp/ogham-mcp` | Isolation, self-hosted |
 | **Git clone** | `git clone` + `uv sync` | Development, contributions |
 
 ### Claude Code
 
 ```bash
+# From PyPI
 claude mcp add ogham -- uvx ogham-mcp
+
+# From GitHub (before PyPI) -- run ogham init first to configure your database and provider
+claude mcp add ogham -- uvx --from git+https://github.com/ogham-mcp/ogham-mcp.git ogham-serve
 ```
 
 ### OpenCode
@@ -89,17 +120,43 @@ uv sync
 uv run ogham --help
 ```
 
+## Entry points
+
+Ogham has two entry points:
+
+- **`ogham`** -- the CLI. Use this for `ogham init`, `ogham health`, `ogham search`, and other commands you run yourself. Running `ogham` with no arguments starts the MCP server.
+- **`ogham-serve`** -- starts the MCP server directly. This is what MCP clients should call. When you run `uvx ogham-mcp`, it invokes `ogham-serve`.
+
+## CLI
+
+```bash
+ogham init                      # Interactive setup wizard
+ogham health                    # Check database + embedding provider
+ogham search "query"            # Search memories from the terminal
+ogham store "some fact"         # Store a memory
+ogham list                      # List recent memories
+ogham profiles                  # List profiles and counts
+ogham stats                     # Profile statistics
+ogham export -o backup.json     # Export memories
+ogham import backup.json        # Import memories
+ogham cleanup                   # Remove expired memories
+ogham serve                     # Start MCP server (default)
+ogham openapi                   # Generate OpenAPI spec
+```
+
 ## Configuration
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SUPABASE_URL` | Yes | — | Your Supabase project URL |
-| `SUPABASE_KEY` | Yes | — | Supabase service role key |
+| `DATABASE_BACKEND` | No | `supabase` | `supabase` or `postgres` |
+| `SUPABASE_URL` | If supabase | -- | Your Supabase project URL |
+| `SUPABASE_KEY` | If supabase | -- | Supabase secret key (service_role) |
+| `DATABASE_URL` | If postgres | -- | PostgreSQL connection string |
 | `EMBEDDING_PROVIDER` | No | `ollama` | `ollama`, `openai`, `mistral`, or `voyage` |
-| `EMBEDDING_DIM` | No | Per provider | Vector dimensions (see below) |
-| `OPENAI_API_KEY` | If openai | — | OpenAI API key |
-| `MISTRAL_API_KEY` | If mistral | — | Mistral API key |
-| `VOYAGE_API_KEY` | If voyage | — | Voyage AI API key |
+| `EMBEDDING_DIM` | No | `512` | Vector dimensions -- must match your schema (see below) |
+| `OPENAI_API_KEY` | If openai | -- | OpenAI API key |
+| `MISTRAL_API_KEY` | If mistral | -- | Mistral API key |
+| `VOYAGE_API_KEY` | If voyage | -- | Voyage AI API key |
 | `OLLAMA_URL` | No | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_EMBED_MODEL` | No | `embeddinggemma` | Ollama embedding model |
 | `MISTRAL_EMBED_MODEL` | No | `mistral-embed` | Mistral embedding model |
@@ -112,12 +169,14 @@ uv run ogham --help
 
 | Provider | Default dimensions | Recommended threshold | Notes |
 |----------|-------------------|----------------------|-------|
-| OpenAI | 1024 | 0.35 | Widest spread, scores run 0.5-0.6 |
+| OpenAI | 512 (schema default) | 0.35 | Set `EMBEDDING_DIM=512` explicitly -- OpenAI defaults to 1024 |
 | Ollama | 512 | 0.70 | Tight clustering, scores run 0.8-0.9 |
-| Mistral | 1024 | 0.60 | Tight clustering, similar to Ollama |
-| Voyage | 1024 | 0.45 | Moderate spread |
+| Mistral | 1024 | 0.60 | Fixed 1024 dims, can't truncate. Schema must be `vector(1024)` |
+| Voyage | 512 (schema default) | 0.45 | Moderate spread |
 
-The threshold matters — each provider clusters vectors differently. Start with the recommended value and adjust.
+`EMBEDDING_DIM` must match the `vector(N)` column in your database schema. The default schema uses `vector(512)`. If you use Mistral, you need to alter the column to `vector(1024)` before storing anything.
+
+Each provider clusters vectors differently, so the similarity threshold matters. Start with the recommended value and adjust based on your results.
 
 ## MCP tools
 
@@ -152,11 +211,11 @@ The threshold matters — each provider clusters vectors differently. Start with
 | Tool | Description | Key parameters |
 |------|-------------|----------------|
 | `switch_profile` | Switch active memory profile | `profile` |
-| `current_profile` | Show active profile | — |
-| `list_profiles` | List all profiles with counts | — |
+| `current_profile` | Show active profile | -- |
+| `list_profiles` | List all profiles with counts | -- |
 | `set_profile_ttl` | Set auto-expiry for a profile | `profile`, `ttl_days` |
 
-### Import / Export
+### Import / export
 
 | Tool | Description | Key parameters |
 |------|-------------|----------------|
@@ -167,21 +226,23 @@ The threshold matters — each provider clusters vectors differently. Start with
 
 | Tool | Description | Key parameters |
 |------|-------------|----------------|
-| `re_embed_all` | Re-embed all memories (provider switch) | — |
-| `cleanup_expired` | Remove expired memories (TTL) | — |
-| `health_check` | Check database and embedding connectivity | — |
-| `get_stats` | Memory counts, profiles, activity | — |
-| `get_cache_stats` | Embedding cache hit rates | — |
+| `re_embed_all` | Re-embed all memories (after switching providers) | -- |
+| `cleanup_expired` | Remove expired memories (TTL) | -- |
+| `health_check` | Check database and embedding connectivity | -- |
+| `get_stats` | Memory counts, profiles, activity | -- |
+| `get_cache_stats` | Embedding cache hit rates | -- |
 
 ## Database setup
 
-Ogham uses Supabase PostgreSQL with pgvector. Run the schema file that matches your setup:
+Ogham works with Supabase or vanilla PostgreSQL. Run the schema file that matches your setup:
 
 | File | Use case |
 |------|----------|
-| `sql/schema.sql` | Supabase Cloud (recommended) |
+| `sql/schema.sql` | Supabase Cloud |
 | `sql/schema_selfhost_supabase.sql` | Self-hosted Supabase with RLS |
 | `sql/schema_postgres.sql` | Vanilla PostgreSQL / Neon (no RLS) |
+
+For Postgres, set `DATABASE_BACKEND=postgres` and `DATABASE_URL=postgresql://...` in your environment.
 
 ## Architecture
 
@@ -194,24 +255,24 @@ AI Client (Claude Code, Cursor, Kiro, OpenCode, ...)
     |
 Ogham MCP Server
     |
-    | HTTPS (Supabase REST API)
+    | HTTPS (Supabase REST API) or direct connection (Postgres)
     |
 PostgreSQL + pgvector
 ```
 
 Memories are stored as rows with vector embeddings. Search combines pgvector cosine similarity with PostgreSQL full-text search using Reciprocal Rank Fusion (RRF).
 
-The knowledge graph uses a `memory_relationships` table with recursive CTEs for traversal — no separate graph database needed.
+The knowledge graph uses a `memory_relationships` table with recursive CTEs for traversal -- no separate graph database.
 
 ## Documentation
 
-Full documentation, architecture deep-dives, and guides at [ogham-mcp.dev](https://ogham-mcp.dev).
+Full docs and integration guides at [ogham-mcp.dev](https://ogham-mcp.dev).
 
 ## Credits
 
-Inspired by the work of [Nate B Jones](https://www.youtube.com/watch?v=2JiMmye2ezg) on persistent AI memory systems.
+Inspired by [Nate B Jones](https://www.youtube.com/watch?v=2JiMmye2ezg) and his work on persistent AI memory.
 
-Named after [Ogham](https://en.wikipedia.org/wiki/Ogham), the ancient Irish alphabet carved into stone — the original persistent memory.
+Named after [Ogham](https://en.wikipedia.org/wiki/Ogham), the ancient Irish alphabet carved into stone -- the original persistent memory.
 
 ## License
 
