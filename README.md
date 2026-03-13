@@ -17,7 +17,7 @@ Ogham gives your agents a shared memory that persists across sessions and client
 
 **Supabase** (free tier works): create a project at [supabase.com](https://supabase.com), then run `sql/schema.sql` in the SQL editor.
 
-**Postgres** (Neon, self-hosted, etc.): run `sql/schema_postgres.sql` against your database. Needs PostgreSQL 15+ with pgvector.
+**Postgres** ([Neon](https://neon.tech), self-hosted, etc.): run `sql/schema_postgres.sql` against your database. Needs PostgreSQL 15+ with pgvector.
 
 ### 2. Install
 
