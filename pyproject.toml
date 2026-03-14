@@ -63,6 +63,11 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.bandit]
+# B608: SQL "injection" in postgres.py -- all parameterised queries, column names are internal
+# B104: bind 0.0.0.0 in http_health.py -- intentional for Docker
+skips = ["B608", "B104"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/ogham"]
 
