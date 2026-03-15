@@ -159,6 +159,48 @@ def test_compute_importance_plain():
     assert score <= 0.4  # no signals, low importance
 
 
+def test_compute_importance_german_decision():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("Wir haben entschieden PostgreSQL zu verwenden")
+    assert score >= 0.5  # German decision keyword
+
+
+def test_compute_importance_french_error():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("Une erreur est survenue dans le module")
+    assert score >= 0.4  # French error keyword
+
+
+def test_compute_importance_chinese_architecture():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("我们需要重构这个模块的架构")
+    assert score >= 0.4  # Chinese architecture keywords
+
+
+def test_compute_importance_spanish_decision():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("Hemos decidido migrar a la nueva plataforma")
+    assert score >= 0.5  # Spanish decision keyword
+
+
+def test_compute_importance_arabic_error():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("حدث خطأ في النظام أثناء المعالجة")
+    assert score >= 0.4  # Arabic error keyword
+
+
+def test_compute_importance_turkish_decision():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("Yeni framework tercih ettik ve geçiş yaptık")
+    assert score >= 0.5  # Turkish decision keyword
+
+
 def test_extract_entities_empty():
     from ogham.extraction import extract_entities
 

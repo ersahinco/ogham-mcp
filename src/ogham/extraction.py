@@ -117,30 +117,283 @@ _CAMEL_CASE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-zA-Z]*)+\b")
 _FILE_PATH = re.compile(r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+")
 _ERROR_TYPE = re.compile(r"\b\w*(?:Error|Exception)\b")
 
-# --- Importance scoring ---
+# --- Importance scoring (8 languages) ---
 
-_DECISION_RE = re.compile(
-    r"\b(?:decided|chose|choosing|switched|migrated|selected|picked|opted)\b",
-    re.IGNORECASE,
-)
-_ARCHITECTURE_RE = re.compile(
-    r"\b(?:design|pattern|refactor|architecture|restructur|modular|decouple)\b",
-    re.IGNORECASE,
-)
+_DECISION_WORDS_BY_LANG = {
+    "en": {
+        "decided",
+        "chose",
+        "choosing",
+        "switched",
+        "migrated",
+        "selected",
+        "picked",
+        "opted",
+        "replaced",
+        "adopted",
+    },
+    "de": {
+        "entschieden",
+        "gewählt",
+        "gewechselt",
+        "migriert",
+        "ausgewählt",
+        "ersetzt",
+        "umgestiegen",
+        "beschlossen",
+        "festgelegt",
+        "übernommen",
+    },
+    "fr": {
+        "décidé",
+        "choisi",
+        "migré",
+        "sélectionné",
+        "remplacé",
+        "adopté",
+        "opté",
+        "basculé",
+        "changé",
+        "retenu",
+    },
+    "it": {
+        "deciso",
+        "scelto",
+        "migrato",
+        "selezionato",
+        "sostituito",
+        "adottato",
+        "optato",
+        "cambiato",
+        "passato",
+        "configurato",
+    },
+    "es": {
+        "decidido",
+        "elegido",
+        "migrado",
+        "seleccionado",
+        "reemplazado",
+        "adoptado",
+        "optado",
+        "cambiado",
+        "escogido",
+        "configurado",
+    },
+    "ar": {"قرر", "اختار", "انتقل", "حدد", "استبدل", "اعتمد", "بدّل", "غيّر", "هاجر", "تبنى"},
+    "tr": {
+        "karar",
+        "seçti",
+        "geçti",
+        "taşıdı",
+        "değiştirdi",
+        "benimsedi",
+        "tercih",
+        "belirledi",
+        "yapılandırdı",
+        "uyguladı",
+    },
+    "zh": {"决定", "选择", "迁移", "替换", "采用", "切换", "配置", "选定", "更换", "转换"},
+}
+
+_ERROR_WORDS_BY_LANG = {
+    "en": {
+        "error",
+        "exception",
+        "failed",
+        "failure",
+        "bug",
+        "crash",
+        "broken",
+        "traceback",
+        "timeout",
+        "denied",
+    },
+    "de": {
+        "fehler",
+        "ausnahme",
+        "fehlgeschlagen",
+        "absturz",
+        "defekt",
+        "zeitüberschreitung",
+        "abgelehnt",
+        "abgebrochen",
+        "ungültig",
+        "kaputt",
+    },
+    "fr": {
+        "erreur",
+        "exception",
+        "échoué",
+        "échec",
+        "bogue",
+        "plantage",
+        "cassé",
+        "délai",
+        "refusé",
+        "invalide",
+    },
+    "it": {
+        "errore",
+        "eccezione",
+        "fallito",
+        "guasto",
+        "crash",
+        "rotto",
+        "scaduto",
+        "negato",
+        "invalido",
+        "interrotto",
+    },
+    "es": {
+        "error",
+        "excepción",
+        "fallido",
+        "fallo",
+        "roto",
+        "caída",
+        "tiempo",
+        "denegado",
+        "inválido",
+        "bloqueado",
+    },
+    "ar": {"خطأ", "استثناء", "فشل", "عطل", "انهيار", "مكسور", "مهلة", "مرفوض", "غير صالح", "توقف"},
+    "tr": {
+        "hata",
+        "istisna",
+        "başarısız",
+        "arıza",
+        "çöktü",
+        "bozuk",
+        "zaman aşımı",
+        "reddedildi",
+        "geçersiz",
+        "durdu",
+    },
+    "zh": {"错误", "异常", "失败", "故障", "崩溃", "超时", "拒绝", "无效", "中断", "报错"},
+}
+
+_ARCHITECTURE_WORDS_BY_LANG = {
+    "en": {
+        "design",
+        "pattern",
+        "refactor",
+        "architecture",
+        "restructure",
+        "modular",
+        "decouple",
+        "abstract",
+        "interface",
+        "migrate",
+    },
+    "de": {
+        "entwurf",
+        "muster",
+        "refaktorisierung",
+        "architektur",
+        "umstrukturierung",
+        "modular",
+        "entkoppeln",
+        "abstraktion",
+        "schnittstelle",
+        "migration",
+    },
+    "fr": {
+        "conception",
+        "modèle",
+        "refactorisation",
+        "architecture",
+        "restructuration",
+        "modulaire",
+        "découpler",
+        "abstraction",
+        "interface",
+        "migration",
+    },
+    "it": {
+        "progettazione",
+        "modello",
+        "refactoring",
+        "architettura",
+        "ristrutturazione",
+        "modulare",
+        "disaccoppiare",
+        "astrazione",
+        "interfaccia",
+        "migrazione",
+    },
+    "es": {
+        "diseño",
+        "patrón",
+        "refactorización",
+        "arquitectura",
+        "reestructuración",
+        "modular",
+        "desacoplar",
+        "abstracción",
+        "interfaz",
+        "migración",
+    },
+    "ar": {
+        "تصميم",
+        "نمط",
+        "إعادة هيكلة",
+        "بنية",
+        "معمارية",
+        "وحدات",
+        "فصل",
+        "تجريد",
+        "واجهة",
+        "ترحيل",
+    },
+    "tr": {
+        "tasarım",
+        "kalıp",
+        "yeniden düzenleme",
+        "mimari",
+        "yeniden yapılandırma",
+        "modüler",
+        "ayrıştırma",
+        "soyutlama",
+        "arayüz",
+        "geçiş",
+    },
+    "zh": {"设计", "模式", "重构", "架构", "解耦", "模块化", "抽象", "接口", "迁移", "拆分"},
+}
+
+# Flatten all languages into single sets for fast lookup
+_DECISION_WORDS: set[str] = set()
+for _words in _DECISION_WORDS_BY_LANG.values():
+    _DECISION_WORDS.update(_words)
+
+_ERROR_WORDS: set[str] = set()
+for _words in _ERROR_WORDS_BY_LANG.values():
+    _ERROR_WORDS.update(_words)
+
+_ARCHITECTURE_WORDS: set[str] = set()
+for _words in _ARCHITECTURE_WORDS_BY_LANG.values():
+    _ARCHITECTURE_WORDS.update(_words)
+
+
+def _content_has_signal(content: str, word_set: set[str]) -> bool:
+    """Check if content contains any word from the signal set."""
+    content_lower = content.lower()
+    return any(word in content_lower for word in word_set)
 
 
 def compute_importance(content: str, tags: list[str] | None = None) -> float:
     """Score content importance based on signals. Returns 0.0-1.0.
 
-    No LLM needed -- pure regex on the text itself.
+    Checks 8 languages for decision, error, and architecture keywords.
+    No LLM needed.
     """
     score = 0.2  # base score
 
-    if _DECISION_RE.search(content):
+    if _content_has_signal(content, _DECISION_WORDS):
         score += 0.3
-    if _ERROR_TYPE.search(content):
+    if _content_has_signal(content, _ERROR_WORDS) or _ERROR_TYPE.search(content):
         score += 0.2
-    if _ARCHITECTURE_RE.search(content):
+    if _content_has_signal(content, _ARCHITECTURE_WORDS):
         score += 0.2
     if _FILE_PATH.search(content):
         score += 0.1
