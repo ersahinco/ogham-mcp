@@ -222,7 +222,7 @@ Each provider clusters vectors differently, so the similarity threshold matters.
 
 | Tool | Description | Key parameters |
 |------|-------------|----------------|
-| `hybrid_search` | Combined semantic + full-text search (RRF) | `query`, `limit`, `threshold`, `tags[]` |
+| `hybrid_search` | Combined semantic + full-text search (RRF) | `query`, `limit`, `tags[]`, `graph_depth` |
 | `list_recent` | List recent memories | `limit`, `profile` |
 | `find_related` | Find memories related to a given one | `memory_id`, `limit` |
 
@@ -254,6 +254,7 @@ Each provider clusters vectors differently, so the similarity threshold matters.
 | Tool | Description | Key parameters |
 |------|-------------|----------------|
 | `re_embed_all` | Re-embed all memories (after switching providers) | -- |
+| `compress_old_memories` | Condense old inactive memories (full text to summary to tags) | -- |
 | `cleanup_expired` | Remove expired memories (TTL) | -- |
 | `health_check` | Check database and embedding connectivity | -- |
 | `get_stats` | Memory counts, profiles, activity | -- |
@@ -289,6 +290,16 @@ Manual install (copy from a local clone):
 cp -r skills/ogham-research skills/ogham-recall skills/ogham-maintain ~/.claude/skills/
 ```
 
+## Scoring and condensing
+
+Ogham goes beyond storing and retrieving. Three server-side features run automatically, no configuration needed.
+
+**Novelty detection.** When you store a memory, Ogham checks how similar it is to what you already have. Redundant content gets a lower novelty score and ranks quieter in search results. You can still find it, but it won't push out more useful memories.
+
+**Content signal scoring.** Memories that mention decisions, errors, architecture, or contain code blocks get a higher signal score. A debug session where you fixed a real bug ranks above a casual note about a meeting. The scoring is pure regex, no LLM involved.
+
+**Automatic condensing.** Old memories that nobody accesses gradually shrink. Full text becomes a summary of key sentences, then a one-line description with tags. The original is always preserved and can be restored if the memory becomes relevant again. Run `compress_old_memories` manually or on a schedule. High-importance and frequently-accessed memories resist condensing.
+
 ## Database setup
 
 Ogham works with Supabase or vanilla PostgreSQL. Run the schema file that matches your setup:
@@ -305,7 +316,7 @@ For Postgres, set `DATABASE_BACKEND=postgres` and `DATABASE_URL=postgresql://...
 
 ## Architecture
 
-Ogham runs as an MCP server over stdio. Your AI client connects to it like any other MCP tool.
+Ogham runs as an MCP server over stdio or SSE. Your AI client connects to it like any other MCP tool.
 
 ```
 AI Client (Claude Code, Cursor, Kiro, OpenCode, ...)
