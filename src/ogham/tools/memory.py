@@ -34,7 +34,7 @@ from ogham.database import update_memory as db_update
 from ogham.embeddings import clear_embedding_cache, generate_embedding, generate_embeddings_batch
 from ogham.export_import import export_memories as _export_memories
 from ogham.export_import import import_memories as _import_memories
-from ogham.extraction import extract_dates, extract_entities
+from ogham.extraction import compute_importance, extract_dates, extract_entities
 from ogham.health import full_health_check
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,26 @@ def store_memory(
             tags = list(tags)
         tags.extend(entity_tags)
 
+    # Compute importance score from content signals
+    importance = compute_importance(content, tags)
+
     embedding = generate_embedding(content)
+
+    # Compute surprise score: how novel is this vs existing memories?
+    surprise = 0.5  # default: moderate novelty
+    try:
+        existing = hybrid_search_memories(
+            query_text=content[:200],
+            query_embedding=embedding,
+            profile=_active_profile,
+            limit=3,
+        )
+        if existing:
+            max_sim = max(r.get("similarity", 0) for r in existing)
+            surprise = round(1.0 - max_sim, 3)
+    except Exception:
+        logger.debug("Surprise scoring skipped: search failed, using default 0.5")
+
     ttl_days = db_get_profile_ttl(_active_profile)
     expires_at = None
     if ttl_days is not None:
@@ -189,6 +208,8 @@ def store_memory(
         source=source,
         tags=tags,
         expires_at=expires_at,
+        importance=importance,
+        surprise=surprise,
     )
     response: dict[str, Any] = {
         "status": "stored",
@@ -667,3 +688,87 @@ def find_related(
         relationship_types=relationship_types,
         limit=limit,
     )
+
+
+@mcp.tool
+@log_timing("compress_old_memories")
+def compress_old_memories() -> dict[str, Any]:
+    """Compress old, inactive memories to save space and reduce search noise.
+
+    Memories compress gradually:
+    - Level 0 (recent): full text preserved
+    - Level 1 (7+ days, low activity): compressed to key sentences (~30%)
+    - Level 2 (30+ days, low activity): compressed to one-line summary + tags
+
+    High-importance, frequently-accessed, or high-confidence memories
+    resist compression. Original content is always preserved for restoration.
+    """
+    from ogham.compression import compress_to_gist, compress_to_tags, get_compression_target
+    from ogham.database import get_all_memories_full
+
+    memories = get_all_memories_full(profile=_active_profile)
+    stats = {"compressed_to_gist": 0, "compressed_to_tags": 0, "skipped": 0, "total": len(memories)}
+
+    for mem in memories:
+        current = mem.get("compression_level", 0)
+        target = get_compression_target(mem)
+
+        if target <= current:
+            stats["skipped"] += 1
+            continue
+
+        content = mem["content"]
+        tags = mem.get("tags", [])
+
+        if target == 1 and current == 0:
+            gist = compress_to_gist(content)
+            db_update(
+                mem["id"],
+                content=gist,
+                profile=_active_profile,
+            )
+            # Store original and update compression level via direct update
+            _update_compression(mem["id"], compression_level=1, original_content=content)
+            stats["compressed_to_gist"] += 1
+
+        elif target == 2:
+            if current == 0:
+                # Save original before any compression
+                _update_compression(mem["id"], original_content=content)
+            tag_repr = compress_to_tags(content, tags)
+            db_update(
+                mem["id"],
+                content=tag_repr,
+                profile=_active_profile,
+            )
+            _update_compression(mem["id"], compression_level=2)
+            stats["compressed_to_tags"] += 1
+
+    return stats
+
+
+def _update_compression(
+    memory_id: str,
+    compression_level: int | None = None,
+    original_content: str | None = None,
+) -> None:
+    """Update compression columns directly via backend."""
+    from ogham.database import get_backend
+
+    backend = get_backend()
+    updates = {}
+    if compression_level is not None:
+        updates["compression_level"] = compression_level
+    if original_content is not None:
+        updates["original_content"] = original_content
+
+    if hasattr(backend, "_get_client"):
+        # Supabase
+        client = backend._get_client()
+        client.table("memories").update(updates).eq("id", memory_id).execute()
+    else:
+        # Postgres
+        set_clauses = [f"{k} = %({k})s" for k in updates]
+        updates["id"] = memory_id
+        sql = f"UPDATE memories SET {', '.join(set_clauses)} WHERE id = %(id)s"
+        backend._execute(sql, updates)

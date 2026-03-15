@@ -43,6 +43,8 @@ class SupabaseBackend:
         source: str | None = None,
         tags: list[str] | None = None,
         expires_at: str | None = None,
+        importance: float = 0.5,
+        surprise: float = 0.5,
     ) -> dict[str, Any]:
         row = {
             "content": content,
@@ -51,6 +53,8 @@ class SupabaseBackend:
             "metadata": metadata or {},
             "source": source,
             "tags": tags or [],
+            "importance": importance,
+            "surprise": surprise,
         }
         if expires_at is not None:
             row["expires_at"] = expires_at

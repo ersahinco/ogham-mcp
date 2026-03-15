@@ -4,11 +4,14 @@ Pure regex, no LLM calls. Runs at store_memory time to enrich
 metadata (dates) and tags (entities) automatically.
 """
 
+import logging
 import re
 from datetime import datetime
 
 import parsedatetime
 from stop_words import AVAILABLE_LANGUAGES, get_stop_words
+
+logger = logging.getLogger(__name__)
 
 # parsedatetime calendar for relative date parsing (zero deps, English)
 _PDT_CAL = parsedatetime.Calendar()
@@ -83,6 +86,7 @@ def extract_dates(content: str) -> list[str]:
                 except ValueError:
                     continue
         except Exception:
+            logger.debug("Failed to parse natural date: %s", match.group(0))
             continue
 
     # Relative dates via parsedatetime ("last Tuesday", "yesterday", "two weeks ago")
@@ -95,6 +99,7 @@ def extract_dates(content: str) -> list[str]:
                     dt = datetime(*result[:6])
                     dates.add(dt.strftime("%Y-%m-%d"))
             except Exception:
+                logger.debug("Failed to parse relative date: %s", phrase)
                 continue
 
     return sorted(dates)
@@ -106,11 +111,50 @@ def has_temporal_intent(query: str) -> bool:
     return bool(words & TEMPORAL_KEYWORDS)
 
 
-# --- Entity extraction ---
+# --- Shared regex patterns (used by both importance and entity extraction) ---
 
 _CAMEL_CASE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-zA-Z]*)+\b")
 _FILE_PATH = re.compile(r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+")
 _ERROR_TYPE = re.compile(r"\b\w*(?:Error|Exception)\b")
+
+# --- Importance scoring ---
+
+_DECISION_RE = re.compile(
+    r"\b(?:decided|chose|choosing|switched|migrated|selected|picked|opted)\b",
+    re.IGNORECASE,
+)
+_ARCHITECTURE_RE = re.compile(
+    r"\b(?:design|pattern|refactor|architecture|restructur|modular|decouple)\b",
+    re.IGNORECASE,
+)
+
+
+def compute_importance(content: str, tags: list[str] | None = None) -> float:
+    """Score content importance based on signals. Returns 0.0-1.0.
+
+    No LLM needed -- pure regex on the text itself.
+    """
+    score = 0.2  # base score
+
+    if _DECISION_RE.search(content):
+        score += 0.3
+    if _ERROR_TYPE.search(content):
+        score += 0.2
+    if _ARCHITECTURE_RE.search(content):
+        score += 0.2
+    if _FILE_PATH.search(content):
+        score += 0.1
+    if "```" in content or "`" in content:
+        score += 0.1
+    if len(content) > 500:
+        score += 0.1
+    if tags and len(tags) >= 3:
+        score += 0.1
+
+    return min(score, 1.0)
+
+
+# --- Entity extraction ---
 _PUNCT = str.maketrans("", "", ".,!?:;\"'()")
 
 

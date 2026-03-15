@@ -32,13 +32,45 @@ import sys
 import time
 from pathlib import Path
 
+MAX_RETRIES = 3
+RETRY_DELAY = 2.0  # seconds, doubles each retry
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
 
 DATA_FILE = Path(__file__).parent / "locomo10.json"
 RESULTS_FILE = Path(__file__).parent / "locomo_results.json"
 
+
 # LoCoMo category mapping
+def _with_retry(fn, *args, **kwargs):
+    """Call fn with retry on connection errors (Neon pooler drops)."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            err = str(e).lower()
+            if "connection" in err or "closed" in err or "terminated" in err:
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAY * (2**attempt)
+                    logger.warning(
+                        "Connection lost, retrying in %.1fs (%d/%d)",
+                        delay,
+                        attempt + 1,
+                        MAX_RETRIES,
+                    )
+                    time.sleep(delay)
+                    # Reset the database backend to force a new connection
+                    try:
+                        from ogham.database import _reset_backend
+
+                        _reset_backend()
+                    except Exception:
+                        pass
+                    continue
+            raise
+
+
 CATEGORIES = {
     "1": "single-hop",
     "2": "temporal",
@@ -107,7 +139,8 @@ def ingest_conversations(
                     dia_ids = [t.get("dia_id", "") for t in window if t.get("dia_id")]
                     chunk_tags = [f"conv:{conv_id}", f"session:{session_key}", f"chunk:{i}"]
                     chunk_tags.extend([f"dia:{d}" for d in dia_ids])
-                    db_store(
+                    _with_retry(
+                        db_store,
                         content=content,
                         embedding=embedding,
                         profile=profile,
@@ -126,7 +159,8 @@ def ingest_conversations(
                 dia_ids = [t.get("dia_id", "") for t in turns if t.get("dia_id")]
                 session_tags = [f"conv:{conv_id}", f"session:{session_key}"]
                 session_tags.extend([f"dia:{d}" for d in dia_ids])
-                db_store(
+                _with_retry(
+                    db_store,
                     content=content,
                     embedding=embedding,
                     profile=profile,
@@ -147,7 +181,7 @@ def ingest_conversations(
     return total_stored
 
 
-def evaluate(data: list[dict], profile: str, top_k: int = 10) -> dict:
+def evaluate(data: list[dict], profile: str, top_k: int = 10, graph_depth: int = 0) -> dict:
     """Run QA evaluation against stored memories."""
     from ogham.database import hybrid_search_memories
     from ogham.embeddings import generate_embedding
@@ -175,12 +209,25 @@ def evaluate(data: list[dict], profile: str, top_k: int = 10) -> dict:
 
             # Search Ogham
             query_embedding = generate_embedding(question)
-            search_results = hybrid_search_memories(
-                query_text=question,
-                query_embedding=query_embedding,
-                profile=profile,
-                limit=top_k,
-            )
+            if graph_depth > 0:
+                from ogham.database import graph_augmented_search
+
+                search_results = _with_retry(
+                    graph_augmented_search,
+                    query_text=question,
+                    query_embedding=query_embedding,
+                    profile=profile,
+                    limit=top_k,
+                    graph_depth=graph_depth,
+                )
+            else:
+                search_results = _with_retry(
+                    hybrid_search_memories,
+                    query_text=question,
+                    query_embedding=query_embedding,
+                    profile=profile,
+                    limit=top_k,
+                )
 
             # Check if evidence or answer appears in any of the top K results
             found = False
@@ -270,18 +317,33 @@ def evaluate(data: list[dict], profile: str, top_k: int = 10) -> dict:
 
 def cleanup(profile: str):
     """Remove all benchmark memories."""
-    from ogham.database import get_backend
+    from ogham.config import settings
 
-    backend = get_backend()
-    client = backend._get_client()
-    result = (
-        client.table("memories")
-        .delete()
-        .eq("profile", profile)
-        .eq("source", "locomo-benchmark")
-        .execute()
-    )
-    count = len(result.data) if result.data else 0
+    if settings.database_backend == "postgres":
+        import psycopg
+
+        conn = psycopg.connect(settings.database_url)
+        conn.autocommit = True
+        cur = conn.execute(
+            "DELETE FROM memories WHERE profile = %s AND source = %s",
+            (profile, "locomo-benchmark"),
+        )
+        count = cur.rowcount
+        conn.close()
+    else:
+        from ogham.database import get_backend
+
+        backend = get_backend()
+        client = backend._get_client()
+        result = (
+            client.table("memories")
+            .delete()
+            .eq("profile", profile)
+            .eq("source", "locomo-benchmark")
+            .execute()
+        )
+        count = len(result.data) if result.data else 0
+
     logger.info("Deleted %d benchmark memories from profile '%s'", count, profile)
 
 
@@ -298,6 +360,9 @@ def main():
         "--chunk-size", type=int, default=0, help="Turn chunk size (0 = full session)"
     )
     parser.add_argument("--chunk-overlap", type=int, default=2, help="Overlap turns between chunks")
+    parser.add_argument(
+        "--graph-depth", type=int, default=0, help="Graph traversal depth (0 = off)"
+    )
     args = parser.parse_args()
 
     # Load alternate env file if specified (e.g. Neon test bench)
@@ -333,7 +398,7 @@ def main():
 
     logger.info("Running evaluation (Recall@%d)...", args.top_k)
     start = time.time()
-    results = evaluate(data, args.profile, args.top_k)
+    results = evaluate(data, args.profile, args.top_k, args.graph_depth)
     elapsed = time.time() - start
 
     results["evaluation_time_s"] = round(elapsed, 1)

@@ -138,6 +138,27 @@ def test_extract_entities_cap():
     assert len(entities) <= 15
 
 
+def test_compute_importance_decision():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("We decided to use PostgreSQL for the database")
+    assert score >= 0.5  # decision keyword boosts
+
+
+def test_compute_importance_error():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("Got a KeyError when accessing the config dict")
+    assert score >= 0.4  # error keyword boosts
+
+
+def test_compute_importance_plain():
+    from ogham.extraction import compute_importance
+
+    score = compute_importance("had a chat about the project")
+    assert score <= 0.4  # no signals, low importance
+
+
 def test_extract_entities_empty():
     from ogham.extraction import extract_entities
 

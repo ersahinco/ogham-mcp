@@ -54,8 +54,8 @@ class PostgresBackend:
                 raise RuntimeError("DATABASE_URL is required for PostgresBackend")
             self._pool = ConnectionPool(
                 conninfo=settings.database_url,
-                min_size=5,
-                max_size=20,
+                min_size=1,
+                max_size=5,
                 kwargs={"row_factory": dict_row},
             )
         return self._pool
@@ -101,8 +101,19 @@ class PostgresBackend:
         source: str | None = None,
         tags: list[str] | None = None,
         expires_at: str | None = None,
+        importance: float = 0.5,
+        surprise: float = 0.5,
     ) -> dict[str, Any]:
-        cols = ["content", "embedding", "profile", "metadata", "source", "tags"]
+        cols = [
+            "content",
+            "embedding",
+            "profile",
+            "metadata",
+            "source",
+            "tags",
+            "importance",
+            "surprise",
+        ]
         vals = [
             "%(content)s",
             "%(embedding)s::vector",
@@ -110,6 +121,8 @@ class PostgresBackend:
             "%(metadata)s",
             "%(source)s",
             "%(tags)s",
+            "%(importance)s",
+            "%(surprise)s",
         ]
         params: dict[str, Any] = {
             "content": content,
@@ -118,6 +131,8 @@ class PostgresBackend:
             "metadata": Jsonb(metadata or {}),
             "source": source,
             "tags": tags or [],
+            "importance": importance,
+            "surprise": surprise,
         }
         if expires_at is not None:
             cols.append("expires_at")

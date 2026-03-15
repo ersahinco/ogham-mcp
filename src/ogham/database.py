@@ -61,9 +61,19 @@ def store_memory(
     source: str | None = None,
     tags: list[str] | None = None,
     expires_at: str | None = None,
+    importance: float = 0.5,
+    surprise: float = 0.5,
 ) -> dict[str, Any]:
     return get_backend().store_memory(
-        content, embedding, profile, metadata, source, tags, expires_at
+        content,
+        embedding,
+        profile,
+        metadata,
+        source,
+        tags,
+        expires_at,
+        importance=importance,
+        surprise=surprise,
     )
 
 

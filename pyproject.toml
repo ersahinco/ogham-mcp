@@ -45,7 +45,7 @@ select = ["E", "F", "I", "W"]
 [tool.bandit]
 # B608: SQL "injection" in postgres.py -- all parameterised queries, column names are internal
 # B104: bind 0.0.0.0 in http_health.py -- intentional for Docker
-skips = ["B608", "B104", "B112"]
+skips = ["B608", "B104"]
 exclude_dirs = ["tests", "benchmarks", "extras"]
 
 [tool.hatch.build.targets.wheel]

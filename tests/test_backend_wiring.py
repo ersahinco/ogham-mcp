@@ -38,7 +38,17 @@ def test_facade_delegates_store_memory():
 
     db.store_memory(content="test", embedding=[0.1, 0.2], profile="default")
 
-    mock.store_memory.assert_called_once_with("test", [0.1, 0.2], "default", None, None, None, None)
+    mock.store_memory.assert_called_once_with(
+        "test",
+        [0.1, 0.2],
+        "default",
+        None,
+        None,
+        None,
+        None,
+        importance=0.5,
+        surprise=0.5,
+    )
 
 
 def test_facade_delegates_hybrid_search():
