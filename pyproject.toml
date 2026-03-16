@@ -1,6 +1,6 @@
 [project]
 name = "ogham-mcp"
-version = "0.4.0"
+version = "0.4.1"
 description = "Shared memory MCP server — persistent, searchable, cross-client"
 readme = "README.md"
 license = "MIT"
