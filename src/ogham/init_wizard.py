@@ -388,8 +388,9 @@ def _run_schema(env_vars: dict) -> bool:
             import psycopg
         except ImportError:
             console.print(
-                "   [yellow]psycopg not installed."
-                " Install with: uv add ogham-mcp[postgres][/yellow]"
+                "   [yellow]psycopg not installed.[/yellow]\n"
+                "   [cyan]Reinstall with postgres support:[/cyan]\n"
+                "   [cyan]  uvx --from 'ogham-mcp[postgres]' ogham-mcp init[/cyan]"
             )
             console.print("   Run the schema manually: sql/schema_postgres.sql")
             return False
@@ -575,6 +576,8 @@ def _test_connection(env_vars: dict) -> bool:
             console.print("   [green]Database: connected[/green]")
         else:
             console.print(f"   [red]Database: {db_result.get('error', 'failed')}[/red]")
+            if hint := db_result.get("hint"):
+                console.print(f"   [cyan]{hint}[/cyan]")
             return False
 
         # Check embedding provider

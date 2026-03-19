@@ -20,6 +20,14 @@ def check_database() -> dict[str, str | bool]:
         else:
             return {"status": "error", "connected": False, "error": "Unknown backend type"}
         return {"status": "ok", "connected": True, "backend": settings.database_backend}
+    except ModuleNotFoundError as e:
+        mod = e.name or str(e)
+        if "psycopg" in mod:
+            hint = "Install with: uvx --from 'ogham-mcp[postgres]' ogham-mcp health"
+        else:
+            hint = f"Missing module: {mod}"
+        logger.error("Database health check failed: %s", e)
+        return {"status": "error", "connected": False, "error": str(e), "hint": hint}
     except Exception as e:
         logger.error("Database health check failed: %s", e)
         return {"status": "error", "connected": False, "error": str(e)}

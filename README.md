@@ -23,6 +23,11 @@ This runs the setup wizard. It walks you through everything: database connection
 
 > **You need a database before running this.** Either create a free [Supabase](https://supabase.com) project or a [Neon](https://neon.tech) database. The wizard handles the rest.
 
+> **Using Neon or self-hosted Postgres?** Install with the postgres extra so the driver is available:
+> ```bash
+> uvx --from 'ogham-mcp[postgres]' ogham-mcp init
+> ```
+
 ### 2. Add to your MCP client
 
 The wizard configures everything and writes your client config -- including all environment variables the server needs. For Claude Code, it runs `claude mcp add` automatically. For other clients, copy the config snippet it prints.

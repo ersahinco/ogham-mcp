@@ -1,6 +1,6 @@
 [project]
 name = "ogham-mcp"
-version = "0.4.2"
+version = "0.4.3"
 description = "Shared memory MCP server — persistent, searchable, cross-client"
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,7 @@ postgres = [
 ]
 mistral = ["mistralai>=1.0"]
 voyage = ["voyageai>=0.3"]
-all = ["mistralai>=1.0", "voyageai>=0.3"]
+all = ["mistralai>=1.0", "voyageai>=0.3", "psycopg-pool>=3.1", "psycopg[binary]>=3.1"]
 
 [project.urls]
 Homepage = "https://ogham-mcp.dev"
