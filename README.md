@@ -323,7 +323,7 @@ Ogham MCP Server
 PostgreSQL + pgvector
 ```
 
-Memories are stored as rows with vector embeddings. Search combines pgvector cosine similarity with PostgreSQL full-text search using Reciprocal Rank Fusion (RRF).
+Memories are stored as rows with vector embeddings. Search combines pgvector cosine similarity with PostgreSQL full-text search using Convex Combination Fusion (CCF). The Supabase backend uses `postgrest-py` directly (not the full Supabase SDK) for a lightweight dependency footprint.
 
 The knowledge graph uses a `memory_relationships` table with recursive CTEs for traversal -- no separate graph database.
 
@@ -338,6 +338,12 @@ Inspired by [Nate B Jones](https://www.youtube.com/watch?v=2JiMmye2ezg) and his 
 Named after [Ogham](https://en.wikipedia.org/wiki/Ogham), the ancient Irish alphabet carved into stone -- the original persistent memory.
 
 ## Changelog
+
+### v0.4.5 (2026-03-20)
+
+- Replaced `supabase` SDK with `postgrest-py` (eliminates pyiceberg/pyroaring dependency chain)
+- Fixes Windows installation without C++ Build Tools (GitHub #4)
+- Significant reduction in install size and transitive dependencies
 
 ### v0.4.4 (2026-03-20)
 
