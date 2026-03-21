@@ -355,49 +355,6 @@ Inspired by [Nate B Jones](https://www.youtube.com/watch?v=2JiMmye2ezg) and his 
 
 Named after [Ogham](https://en.wikipedia.org/wiki/Ogham), the ancient Irish alphabet carved into stone -- the original persistent memory.
 
-## Changelog
-
-### v0.5.0 (2026-03-21)
-
-- **Temporal reasoning**: `occurrence_period` (tstzrange) and `recurrence_days` (int[]) columns for calendar/timeline views
-- **Multilingual recurrence extraction**: detects "every Monday" patterns in 16 languages (no LLM needed)
-- **Bridge retrieval**: entity-centric search for multi-hop temporal queries ("how many months between X and Y")
-- **halfvec compression**: HNSW index uses float16 (~50% index size reduction, zero quality loss)
-- **lz4 TOAST compression**: faster decompression for text columns
-- **Gaussian temporal re-ranking**: directional decay with anchor+proximity scoring
-- **`TEMPORAL_LLM_MODEL`**: configurable LLM fallback for complex date expressions (Ollama, OpenAI, any litellm model)
-- **Ordering query handler**: chronological sorting for "what is the order of" queries
-- **Upgrade script**: `sql/upgrade.sh` for safe incremental schema upgrades
-- **Legacy migrations archived**: old migrations moved to `sql/migrations/archive/` to prevent accidental destructive operations
-- **LongMemEval benchmark**: 97.2% Recall@10 (500 questions, pure retrieval, no LLM in the loop)
-
-### v0.4.5 (2026-03-20)
-
-- Replaced `supabase` SDK with `postgrest-py` (eliminates pyiceberg/pyroaring dependency chain)
-- Fixes Windows installation without C++ Build Tools (GitHub #4)
-- Significant reduction in install size and transitive dependencies
-
-### v0.4.4 (2026-03-20)
-
-- Python 3.14 support (tested and verified)
-- Fixed deprecated asyncio APIs (`new_event_loop`/`set_event_loop` replaced with `asyncio.run()`)
-- Docker image updated to Python 3.14-slim
-- Upgraded pyroaring for 3.14 C extension compatibility
-- Agent Zero FAISS memory import (`agent_zero_import.py` library)
-
-### v0.4.3 (2026-03-19)
-
-- Fixed `psycopg` missing module error for Postgres/Neon users
-- Added `psycopg` to the `[all]` extra
-- Better error messages when database driver is missing
-- Updated Quick Start docs for Postgres users
-
-### v0.4.2 (2026-03-16)
-
-- Launch release
-- `ogham-mcp` script alias for `uvx ogham-mcp`
-- Default embedding dimensions fixed (OpenAI/Voyage default to 512)
-
 ## License
 
 MIT
