@@ -7,6 +7,21 @@
 [![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)](https://python.org)
 [![PyPI](https://img.shields.io/pypi/v/ogham-mcp)](https://pypi.org/project/ogham-mcp/)
 
+## Contents
+
+- [The problem](#the-problem)
+- [Quick start](#quick-start)
+- [Installation methods](#installation-methods) -- Claude Code, OpenCode, Docker, source
+- [SSE transport](#sse-transport-multi-agent) -- multi-agent setup
+- [CLI](#cli) -- command-line interface
+- [Configuration](#configuration) -- env vars, embedding providers, temporal search
+- [MCP tools](#mcp-tools) -- memory, search, graph, profiles, import/export
+- [Skills](#skills) -- ogham-research, ogham-recall, ogham-maintain
+- [Scoring and condensing](#scoring-and-condensing)
+- [Database setup](#database-setup) -- Supabase, Neon, vanilla Postgres
+  - [Upgrading from v0.4.x](#upgrading-from-v04x)
+- [Architecture](#architecture)
+
 ## The problem
 
 AI coding agents forget everything between sessions. Switch from Claude Code to Cursor to Kiro to OpenCode and context is lost. Decisions, gotchas, architectural patterns -- gone. You end up repeating yourself, re-explaining your codebase, re-debugging the same issues.
