@@ -27,6 +27,27 @@
 
 **97.2% Recall@10** on [LongMemEval](https://arxiv.org/abs/2410.10813) (500 questions, ICLR 2025). No LLM in the search pipeline -- one PostgreSQL query, no neural rerankers, no knowledge graph.
 
+**End-to-end QA accuracy** on LongMemEval (retrieval + LLM reads and answers):
+
+| System | Accuracy | Architecture |
+|--------|----------|-------------|
+| [OMEGA](https://dev.to/singularityjason/how-i-built-a-memory-system-that-scores-954-on-longmemeval-1-on-the-leaderboard-2md3) | 95.4% | Classification + extraction pipeline |
+| [Observational Memory (Mastra)](https://mastra.ai/research/observational-memory) | 94.9% | Observation extraction + GPT-5-mini |
+| [Hindsight (Vectorize)](https://venturebeat.com/data/with-91-accuracy-open-source-hindsight-agentic-memory-provides-20-20-vision) | 91.4% | 4 memory types + Gemini-3 |
+| [Zep (Graphiti)](https://blog.getzep.com/state-of-the-art-agent-memory/) | 71.2% | Temporal knowledge graph + GPT-4o |
+| [Mem0](https://mem0.ai) | 49.0% | RAG-based |
+
+**Retrieval only** (R@10 -- no LLM in the search loop):
+
+| System | R@10 | Architecture |
+|--------|------|-------------|
+| **Ogham** | **97.2%** | 1 SQL query (pgvector + tsvector CCF hybrid search) |
+| [LongMemEval paper](https://arxiv.org/abs/2410.10813) baseline | 78.4% | Session decomposition + fact-augmented keys |
+
+[Zikkaron](https://github.com/amanhij/Zikkaron) also reports 96.7% R@10 using cross-encoder reranking, NLI verification, and thermodynamic scoring.
+
+These tables measure different things. QA accuracy tests whether the full system (retrieval + LLM) produces the correct answer. R@10 tests whether retrieval alone finds the right memories. Ogham is a retrieval engine -- it finds the memories, your LLM reads them.
+
 | Category | R@10 | Questions |
 |----------|------|-----------|
 | single-session-assistant | 100% | 56 |
@@ -35,7 +56,6 @@
 | multi-session | 97.3% | 133 |
 | single-session-preference | 96.7% | 30 |
 | temporal-reasoning | 93.5% | 133 |
-| **Overall** | **97.2%** | **500** |
 
 Full breakdown: [ogham-mcp.dev/features](https://ogham-mcp.dev/features/#retrieval-quality)
 
