@@ -40,11 +40,11 @@ def _install_claude_code():
     ogham_hooks = {
         "SessionStart": {
             "matcher": "",
-            "hooks": [{"type": "command", "command": "ogham hooks session-start"}],
+            "hooks": [{"type": "command", "command": "ogham hooks recall"}],
         },
         "PostToolUse": {
             "matcher": "",
-            "hooks": [{"type": "command", "command": "ogham hooks post-tool"}],
+            "hooks": [{"type": "command", "command": "ogham hooks inscribe"}],
         },
         "PreCompact": {
             "matcher": "",
@@ -81,15 +81,15 @@ def _install_kiro():
     console.print("  2. Type 'Kiro: Open Kiro Hook UI'")
     console.print("  3. Create these hooks:")
     console.print("")
-    console.print("  [bold]Hook 1: Session Start[/bold]")
-    console.print("    Event: User prompt submit")
+    console.print("  [bold]Hook 1: Recall[/bold]")
+    console.print("    Event: Prompt Submit")
     console.print("    Action: Run Command")
-    console.print("    Command: ogham hooks session-start")
+    console.print("    Command: ogham hooks recall")
     console.print("")
-    console.print("  [bold]Hook 2: Post Tool[/bold]")
-    console.print("    Event: Post tool invocation")
+    console.print("  [bold]Hook 2: Inscribe[/bold]")
+    console.print("    Event: Agent Stop")
     console.print("    Action: Run Command")
-    console.print("    Command: ogham hooks post-tool")
+    console.print("    Command: ogham hooks inscribe")
     console.print("")
     console.print(
         "[dim]Kiro doesn't support compaction hooks. Session start covers context loading.[/dim]"
