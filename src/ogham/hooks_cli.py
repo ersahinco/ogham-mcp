@@ -9,9 +9,19 @@ hooks_app = typer.Typer(name="hooks", help="Lifecycle hooks for AI coding client
 
 
 def _read_stdin() -> dict:
-    """Read hook input JSON from stdin."""
+    """Read hook input JSON from stdin with timeout.
+
+    Kiro's Agent Stop event may not pipe JSON or may not close stdin,
+    so we use select() to avoid blocking forever.
+    """
+    import select
+
     try:
         if sys.stdin.isatty():
+            return {}
+        # Wait up to 1 second for input, then give up
+        ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+        if not ready:
             return {}
         raw = sys.stdin.read()
         return json.loads(raw) if raw.strip() else {}
@@ -37,12 +47,25 @@ def session_start_cmd(
 def post_tool_cmd(
     profile: str = typer.Option("work", help="Memory profile"),
 ):
-    """Capture tool execution as a memory. Reads hook JSON from stdin."""
+    """Capture tool execution as a memory. Reads hook JSON from stdin.
+
+    If no stdin input (e.g. Kiro Agent Stop), captures a generic
+    session activity marker with the current working directory.
+    """
     from ogham.hooks import post_tool
 
     data = _read_stdin()
-    if data:
-        post_tool(data, profile=profile)
+    if not data:
+        # Kiro Agent Stop doesn't pipe tool data -- create a minimal marker
+        import os
+
+        data = {
+            "tool_name": "AgentStop",
+            "tool_input": {"summary": "Agent turn completed"},
+            "cwd": os.getcwd(),
+            "session_id": "kiro",
+        }
+    post_tool(data, profile=profile)
 
 
 @hooks_app.command(name="inscribe")
