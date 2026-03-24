@@ -68,7 +68,9 @@ SYNC_SOURCES := \
 	sql/schema.sql \
 	sql/schema_postgres.sql \
 	sql/schema_selfhost_supabase.sql \
-	sql/upgrade.sh
+	sql/upgrade.sh \
+	benchmarks/beam_benchmark.py \
+	benchmarks/longmemeval_benchmark.py
 
 sync:
 	@echo "=== Syncing dev → public repo ==="

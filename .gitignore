@@ -37,4 +37,8 @@ skills-lock.json
 
 # Docker
 .worktrees/
-benchmarks/
+# Benchmark data (large JSON files, results, venvs)
+benchmarks/*.json
+benchmarks/beam_results/
+benchmarks/.venv*/
+benchmarks/.env.local
