@@ -11,6 +11,7 @@ PROVIDER_BATCH_DEFAULTS: dict[str, int] = {
     "openai": 500,
     "mistral": 32,
     "voyage": 500,
+    "onnx": 10,
 }
 
 # Default embedding dimensions per provider (used when EMBEDDING_DIM is not set).
@@ -19,6 +20,7 @@ PROVIDER_DEFAULT_DIMS: dict[str, int] = {
     "openai": 1024,
     "mistral": 1024,
     "voyage": 1024,
+    "onnx": 1024,
 }
 
 
@@ -63,6 +65,8 @@ class Settings(BaseSettings):
     mistral_embed_model: str = "mistral-embed"
     voyage_embed_model: str = "voyage-4-lite"
 
+    onnx_model_path: str = ""
+
     default_match_threshold: float = 0.7
     default_match_count: int = 10
 
@@ -103,7 +107,7 @@ class Settings(BaseSettings):
     @field_validator("embedding_provider")
     @classmethod
     def check_provider(cls, v: str) -> str:
-        allowed = {"ollama", "openai", "mistral", "voyage"}
+        allowed = {"ollama", "openai", "mistral", "voyage", "onnx"}
         if v not in allowed:
             raise ValueError(f"embedding_provider must be one of {allowed}, got {v!r}")
         return v

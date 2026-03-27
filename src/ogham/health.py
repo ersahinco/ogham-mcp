@@ -107,6 +107,33 @@ def check_embedding_provider() -> dict[str, str | bool]:
             }
         return {"status": "ok", "provider": "voyage"}
 
+    elif provider == "onnx":
+        try:
+            import onnxruntime  # noqa: F401
+        except ImportError:
+            return {
+                "status": "error",
+                "provider": "onnx",
+                "error": "onnxruntime package not installed",
+                "hint": "Install with: uv add onnxruntime",
+            }
+        model_path = settings.onnx_model_path
+        if not model_path:
+            return {
+                "status": "error",
+                "provider": "onnx",
+                "error": "ONNX_MODEL_PATH not set",
+            }
+        from pathlib import Path
+
+        if not Path(model_path).exists():
+            return {
+                "status": "error",
+                "provider": "onnx",
+                "error": f"Model not found: {model_path}",
+            }
+        return {"status": "ok", "provider": "onnx", "model_path": model_path}
+
     return {"status": "unknown", "provider": provider}
 
 

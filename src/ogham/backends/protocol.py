@@ -23,7 +23,10 @@ class DatabaseBackend(Protocol):
         source: str | None = None,
         tags: list[str] | None = None,
         expires_at: str | None = None,
+        importance: float = 0.5,
+        surprise: float = 0.5,
         recurrence_days: list[int] | None = None,
+        sparse_embedding: str | None = None,
     ) -> dict[str, Any]: ...
 
     def store_memories_batch(
@@ -66,6 +69,17 @@ class DatabaseBackend(Protocol):
         self,
         query_text: str,
         query_embedding: list[float],
+        profile: str,
+        limit: int | None = None,
+        tags: list[str] | None = None,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def hybrid_search_memories_sparse(
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        query_sparse: str,
         profile: str,
         limit: int | None = None,
         tags: list[str] | None = None,

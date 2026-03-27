@@ -42,3 +42,4 @@ benchmarks/*.json
 benchmarks/beam_results/
 benchmarks/.venv*/
 benchmarks/.env.local
+models/

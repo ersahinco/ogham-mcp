@@ -47,6 +47,36 @@ def generate_embedding(text: str) -> list[float]:
     return embedding
 
 
+def generate_embedding_full(text: str) -> tuple[list[float], str | None]:
+    """Generate dense embedding + optional sparse sparsevec string.
+
+    For ONNX provider: runs model once, returns (dense, sparsevec_string).
+    For other providers: returns (dense, None).
+    """
+    cache_key = _cache_key(text)
+
+    cached_full = _cache.get_full(cache_key)
+    if cached_full is not None:
+        dense, sparse = cached_full
+        logger.debug("Embedding cache hit (full) for text hash %s", cache_key[:8])
+        return dense, sparse
+
+    provider = settings.embedding_provider
+    if provider == "onnx":
+        from ogham.onnx_embedder import encode, sparse_to_sparsevec
+
+        result = encode(text, settings.onnx_model_path or None)
+        dense = result.dense
+        _validate_dim(dense)
+        sparse_str = sparse_to_sparsevec(result.sparse)
+        _cache.put(cache_key, dense, sparse=sparse_str)
+        return dense, sparse_str
+    else:
+        dense = _generate_uncached(text)
+        _cache.put(cache_key, dense)
+        return dense, None
+
+
 @with_retry(max_attempts=3, base_delay=0.5, exceptions=(ConnectionError, OSError))
 def _generate_uncached(text: str) -> list[float]:
     """Generate embedding without cache lookup."""
@@ -61,6 +91,8 @@ def _generate_uncached(text: str) -> list[float]:
             return _embed_mistral(text)
         case "voyage":
             return _embed_voyage(text)
+        case "onnx":
+            return _embed_onnx(text)
         case _:
             raise ValueError(f"Unknown embedding provider: {provider}")
 
@@ -166,6 +198,14 @@ def _embed_voyage(text: str) -> list[float]:
     return embedding
 
 
+def _embed_onnx(text: str) -> list[float]:
+    from ogham.onnx_embedder import encode
+
+    result = encode(text, settings.onnx_model_path or None)
+    _validate_dim(result.dense)
+    return result.dense
+
+
 def _validate_dim(embedding: list[float]) -> None:
     if len(embedding) != settings.embedding_dim:
         raise ValueError(
@@ -234,6 +274,8 @@ def _generate_batch_uncached(texts: list[str]) -> list[list[float]]:
             return _embed_mistral_batch(texts)
         case "voyage":
             return _embed_voyage_batch(texts)
+        case "onnx":
+            return _embed_onnx_batch(texts)
         case _:
             raise ValueError(f"Unknown embedding provider: {provider}")
 
@@ -297,6 +339,71 @@ def _embed_voyage_batch(texts: list[str]) -> list[list[float]]:
     for emb in all_embeddings:
         _validate_dim(emb)
     return all_embeddings
+
+
+def _embed_onnx_batch(texts: list[str]) -> list[list[float]]:
+    from ogham.onnx_embedder import encode_batch
+
+    results = encode_batch(texts, settings.onnx_model_path or None)
+    embeddings = [r.dense for r in results]
+    for emb in embeddings:
+        _validate_dim(emb)
+    return embeddings
+
+
+def generate_embeddings_batch_full(
+    texts: list[str],
+    batch_size: int | None = None,
+    on_progress: callable = None,
+) -> list[tuple[list[float], str | None]]:
+    """Generate (dense, sparse_sparsevec) for multiple texts.
+
+    For ONNX: returns sparse strings. For others: sparse is None.
+    """
+    if batch_size is None:
+        batch_size = settings.embedding_batch_size
+    provider = settings.embedding_provider
+    total = len(texts)
+    results: list[tuple[list[float], str | None] | None] = [None] * total
+    uncached: list[tuple[int, str, str]] = []  # (index, cache_key, text)
+
+    for i, text in enumerate(texts):
+        cache_key = _cache_key(text)
+        cached_full = _cache.get_full(cache_key)
+        if cached_full is not None:
+            results[i] = cached_full
+        else:
+            uncached.append((i, cache_key, text))
+
+    cached_count = total - len(uncached)
+    embedded = cached_count
+    if on_progress and cached_count > 0:
+        on_progress(embedded, total)
+
+    for start in range(0, len(uncached), batch_size):
+        batch = uncached[start : start + batch_size]
+        batch_texts = [t for _, _, t in batch]
+
+        if provider == "onnx":
+            from ogham.onnx_embedder import encode_batch, sparse_to_sparsevec
+
+            onnx_results = encode_batch(batch_texts, settings.onnx_model_path or None)
+            for (idx, cache_key, _), oresult in zip(batch, onnx_results):
+                _validate_dim(oresult.dense)
+                sparse_str = sparse_to_sparsevec(oresult.sparse)
+                _cache.put(cache_key, oresult.dense, sparse=sparse_str)
+                results[idx] = (oresult.dense, sparse_str)
+        else:
+            embeddings = _generate_batch_uncached(batch_texts)
+            for (idx, cache_key, _), emb in zip(batch, embeddings):
+                _cache.put(cache_key, emb)
+                results[idx] = (emb, None)
+
+        embedded += len(batch)
+        if on_progress:
+            on_progress(embedded, total)
+
+    return results
 
 
 def clear_embedding_cache() -> int:
