@@ -8,11 +8,9 @@ import pytest
 from ogham.onnx_embedder import (
     VOCAB_SIZE,
     OnnxResult,
-    _SPECIAL_TOKEN_IDS,
     encode,
     sparse_to_sparsevec,
 )
-
 
 # ── sparse_to_sparsevec ─────────────────────────────────────────────
 

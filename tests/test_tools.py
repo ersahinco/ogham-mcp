@@ -1127,7 +1127,10 @@ def test_explore_knowledge(mock_embedding, mock_db):
     """explore_knowledge should search and traverse graph"""
     from ogham.tools.memory import explore_knowledge
 
-    with patch("ogham.tools.memory.db_explore_graph") as mock_explore:
+    with (
+        patch("ogham.tools.memory.db_explore_graph") as mock_explore,
+        patch("ogham.tools.memory.record_access"),
+    ):
         mock_explore.return_value = [
             {
                 "id": FAKE_ID,

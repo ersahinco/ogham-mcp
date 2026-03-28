@@ -635,13 +635,13 @@ def backfill_sparse_bucket(bucket: str, chat_ids: list[int] | None = None, batch
     Reads memory content from postgres, generates sparse vectors via FlagEmbedding,
     and updates the sparse_embedding column.
     """
-    from ogham.database import get_backend
-
     from sparse_embeddings import (
         check_sparsevec_limits,
         generate_sparse_vectors,
         sparse_to_sparsevec_literal,
     )
+
+    from ogham.database import get_backend
 
     backend = get_backend()
     profiles = backend.list_profiles()
@@ -744,7 +744,7 @@ def compare_results(bucket: str):
         print(f"  {metric:<12s}  {tv_val:10.4f}  {sp_val:10.4f}  {sign}{delta:9.4f}")
 
     # Per category
-    print(f"\nPer category (R@10):")
+    print("\nPer category (R@10):")
     print(f"  {'Category':<30s}  {'tsvector':>10s}  {'sparse':>10s}  {'delta':>10s}  {'n':>4s}")
     print(f"  {'-'*30}  {'-'*10}  {'-'*10}  {'-'*10}  {'-'*4}")
     for cat in ALL_CATEGORIES:
@@ -758,7 +758,7 @@ def compare_results(bucket: str):
         print(f"  {cat:<30s}  {tv_r10:10.4f}  {sp_r10:10.4f}  {sign}{delta:9.4f}  {n:4d}")
 
     # Per category MRR
-    print(f"\nPer category (MRR):")
+    print("\nPer category (MRR):")
     print(f"  {'Category':<30s}  {'tsvector':>10s}  {'sparse':>10s}  {'delta':>10s}")
     print(f"  {'-'*30}  {'-'*10}  {'-'*10}  {'-'*10}")
     for cat in ALL_CATEGORIES:
