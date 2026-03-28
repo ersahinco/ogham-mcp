@@ -107,6 +107,31 @@ def check_embedding_provider() -> dict[str, str | bool]:
             }
         return {"status": "ok", "provider": "voyage"}
 
+    elif provider == "onnx":
+        try:
+            import onnxruntime  # noqa: F401
+        except ImportError:
+            return {
+                "status": "error",
+                "provider": "onnx",
+                "error": "onnxruntime package not installed",
+                "hint": "Install with: uv add onnxruntime",
+            }
+        from pathlib import Path
+
+        model_path = settings.onnx_model_path
+        if not model_path:
+            # Use same default as onnx_embedder._get_model()
+            model_path = str(Path.home() / ".cache" / "ogham" / "bge-m3-onnx" / "bge_m3_model.onnx")
+
+        if not Path(model_path).exists():
+            return {
+                "status": "error",
+                "provider": "onnx",
+                "error": f"Model not found: {model_path}",
+            }
+        return {"status": "ok", "provider": "onnx", "model_path": model_path}
+
     return {"status": "unknown", "provider": provider}
 
 

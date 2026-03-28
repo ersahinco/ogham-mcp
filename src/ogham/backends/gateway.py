@@ -58,6 +58,7 @@ class GatewayBackend:
         importance: float = 0.5,
         surprise: float = 0.5,
         recurrence_days: list[int] | None = None,
+        sparse_embedding: str | None = None,
     ) -> dict[str, Any]:
         # Gateway handles embedding + scoring server-side
         return self._post(
@@ -133,6 +134,21 @@ class GatewayBackend:
                 "limit": limit,
                 "tags": tags,
             },
+        )
+
+    def hybrid_search_memories_sparse(
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        query_sparse: str,
+        profile: str,
+        limit: int | None = None,
+        tags: list[str] | None = None,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]:
+        # Gateway doesn't support sparsevec — fall back to dense hybrid search.
+        return self.hybrid_search_memories(
+            query_text, query_embedding, profile, limit, tags, source
         )
 
     def list_recent_memories(

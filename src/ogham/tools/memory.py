@@ -12,6 +12,7 @@ from ogham.config import settings
 from ogham.database import (
     batch_update_embeddings,
     get_all_memories_content,
+    get_backend,
     list_recent_memories,
     record_access,
 )
@@ -26,7 +27,11 @@ from ogham.database import list_profiles as db_list_profiles
 from ogham.database import set_profile_ttl as db_set_profile_ttl
 from ogham.database import update_confidence as db_update_confidence
 from ogham.database import update_memory as db_update
-from ogham.embeddings import clear_embedding_cache, generate_embedding, generate_embeddings_batch
+from ogham.embeddings import (
+    clear_embedding_cache,
+    generate_embedding,
+    generate_embeddings_batch_full,
+)
 from ogham.export_import import export_memories as _export_memories
 from ogham.export_import import import_memories as _import_memories
 from ogham.extraction import extract_dates
@@ -401,43 +406,54 @@ async def re_embed_all(ctx: Context) -> dict[str, Any]:
         return {"status": "nothing_to_do", "profile": _active_profile, "total": 0}
 
     clear_embedding_cache()
-    await ctx.info(f"Re-embedding {total} memories...")
-
-    texts = [mem["content"] for mem in memories]
-    ids = [mem["id"] for mem in memories]
-
-    embeddings = generate_embeddings_batch(texts)
-    await ctx.report_progress(total, total)
-
-    # Write embeddings to DB in batches
-    failed = 0
-    batch_ids: list[str] = []
-    batch_embs: list[list[float]] = []
-    db_batch_size = settings.embedding_batch_size
-
-    for mem_id, emb in zip(ids, embeddings):
-        batch_ids.append(mem_id)
-        batch_embs.append(emb)
-
-        if len(batch_ids) >= db_batch_size:
-            batch_update_embeddings(batch_ids, batch_embs)
-            batch_ids = []
-            batch_embs = []
-
-    if batch_ids:
-        batch_update_embeddings(batch_ids, batch_embs)
-
     provider = settings.embedding_provider
-    model = settings.ollama_embed_model if provider == "ollama" else "text-embedding-3-small"
+    chunk_size = settings.embedding_batch_size
+    await ctx.info(f"Re-embedding {total} memories in chunks of {chunk_size}...")
+
+    # Embed + write in small chunks so memory stays bounded
+    sparse_count = 0
+    succeeded = 0
+
+    backend = get_backend()
+    has_sparse = settings.embedding_provider == "onnx"
+
+    for chunk_start in range(0, total, chunk_size):
+        chunk = memories[chunk_start : chunk_start + chunk_size]
+        chunk_texts = [mem["content"] for mem in chunk]
+        chunk_ids = [mem["id"] for mem in chunk]
+
+        # Generate embeddings for this chunk only
+        full_results = generate_embeddings_batch_full(chunk_texts)
+
+        # Write dense embeddings
+        batch_update_embeddings(chunk_ids, [emb for emb, _ in full_results])
+
+        # Write sparse embeddings immediately
+        if has_sparse:
+            for mem_id, (_, sparse_str) in zip(chunk_ids, full_results):
+                if sparse_str is not None:
+                    backend._execute(
+                        "UPDATE memories SET sparse_embedding = %(sparse)s::sparsevec"
+                        " WHERE id = %(id)s",
+                        {"id": mem_id, "sparse": sparse_str},
+                        fetch="none",
+                    )
+                    sparse_count += 1
+
+        succeeded += len(chunk)
+        await ctx.report_progress(succeeded, total)
+        await ctx.info(f"  {succeeded}/{total} done")
+
+    model = settings.ollama_embed_model if provider == "ollama" else provider
 
     return {
         "status": "complete",
         "profile": _active_profile,
         "total": total,
-        "succeeded": total - failed,
-        "failed": failed,
+        "succeeded": succeeded,
         "provider": provider,
         "model": model,
+        "sparse_updated": sparse_count,
     }
 
 

@@ -31,6 +31,15 @@ class EmbeddingCache:
             )"""
         )
         self._conn.commit()
+        self._migrate_sparse()
+
+    def _migrate_sparse(self) -> None:
+        """Add sparse column if it doesn't exist yet."""
+        cursor = self._conn.execute("PRAGMA table_info(embeddings)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "sparse" not in columns:
+            self._conn.execute("ALTER TABLE embeddings ADD COLUMN sparse TEXT")
+            self._conn.commit()
 
     def get(self, key: str) -> list[float] | None:
         with self._lock:
@@ -43,11 +52,23 @@ class EmbeddingCache:
             self._hits += 1
             return json.loads(row[0])
 
-    def put(self, key: str, embedding: list[float]) -> None:
+    def get_full(self, key: str) -> tuple[list[float], str | None] | None:
+        """Return (dense_embedding, sparse_sparsevec_string) or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value, sparse FROM embeddings WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                self._misses += 1
+                return None
+            self._hits += 1
+            return json.loads(row[0]), row[1]
+
+    def put(self, key: str, embedding: list[float], sparse: str | None = None) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO embeddings (key, value) VALUES (?, ?)",
-                (key, json.dumps(embedding)),
+                "INSERT OR REPLACE INTO embeddings (key, value, sparse) VALUES (?, ?, ?)",
+                (key, json.dumps(embedding), sparse),
             )
             self._conn.commit()
             self._evict()

@@ -49,6 +49,7 @@ def test_facade_delegates_store_memory():
         importance=0.5,
         surprise=0.5,
         recurrence_days=None,
+        sparse_embedding=None,
     )
 
 
