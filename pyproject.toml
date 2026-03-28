@@ -1,20 +1,8 @@
 [project]
 name = "ogham-mcp"
-version = "0.8.1"
+version = "0.4.0"
 description = "Shared memory MCP server — persistent, searchable, cross-client"
-readme = "README.md"
-license = "MIT"
 requires-python = ">=3.13"
-authors = [{ name = "Kevin Burns" }]
-keywords = ["mcp", "memory", "ai", "agents", "pgvector", "embeddings"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
-
 dependencies = [
     "fastmcp>=2.14",
     "postgrest>=2.0",
@@ -35,17 +23,11 @@ postgres = [
 ]
 mistral = ["mistralai>=1.0"]
 voyage = ["voyageai>=0.3"]
-all = ["mistralai>=1.0", "voyageai>=0.3", "psycopg-pool>=3.1", "psycopg[binary]>=3.1"]
-
-[project.urls]
-Homepage = "https://ogham-mcp.dev"
-Documentation = "https://ogham-mcp.dev/docs/"
-Repository = "https://github.com/ogham-mcp/ogham-mcp"
-"Bug Tracker" = "https://github.com/ogham-mcp/ogham-mcp/issues"
+gemini = ["google-genai>=1.0"]
+all = ["mistralai>=1.0", "voyageai>=0.3", "google-genai>=1.0", "psycopg-pool>=3.1", "psycopg[binary]>=3.1"]
 
 [project.scripts]
 ogham = "ogham.cli:main"
-ogham-mcp = "ogham.cli:main"
 ogham-serve = "ogham.server:main"
 
 [tool.pytest.ini_options]
@@ -68,6 +50,9 @@ ignore = ["S608", "S104", "S101"]
 "tests/**" = ["S"]
 "benchmarks/**" = ["S"]
 "extras/**" = ["S"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+".claude/**" = ["E", "F", "I", "W", "S"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ogham"]

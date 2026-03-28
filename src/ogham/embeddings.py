@@ -61,6 +61,8 @@ def _generate_uncached(text: str) -> list[float]:
             return _embed_mistral(text)
         case "voyage":
             return _embed_voyage(text)
+        case "gemini":
+            return _embed_gemini(text)
         case _:
             raise ValueError(f"Unknown embedding provider: {provider}")
 
@@ -166,6 +168,32 @@ def _embed_voyage(text: str) -> list[float]:
     return embedding
 
 
+_gemini_client = None
+
+
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        from google import genai
+
+        _gemini_client = genai.Client(api_key=settings.gemini_api_key)
+    return _gemini_client
+
+
+def _embed_gemini(text: str) -> list[float]:
+    if not settings.gemini_api_key:
+        raise ValueError("GEMINI_API_KEY required when embedding_provider=gemini")
+    client = _get_gemini_client()
+    response = client.models.embed_content(
+        model=settings.gemini_embed_model,
+        contents=text,
+        config={"output_dimensionality": settings.embedding_dim},
+    )
+    embedding = response.embeddings[0].values
+    _validate_dim(embedding)
+    return embedding
+
+
 def _validate_dim(embedding: list[float]) -> None:
     if len(embedding) != settings.embedding_dim:
         raise ValueError(
@@ -234,6 +262,8 @@ def _generate_batch_uncached(texts: list[str]) -> list[list[float]]:
             return _embed_mistral_batch(texts)
         case "voyage":
             return _embed_voyage_batch(texts)
+        case "gemini":
+            return _embed_gemini_batch(texts)
         case _:
             raise ValueError(f"Unknown embedding provider: {provider}")
 
@@ -297,6 +327,21 @@ def _embed_voyage_batch(texts: list[str]) -> list[list[float]]:
     for emb in all_embeddings:
         _validate_dim(emb)
     return all_embeddings
+
+
+def _embed_gemini_batch(texts: list[str]) -> list[list[float]]:
+    if not settings.gemini_api_key:
+        raise ValueError("GEMINI_API_KEY required when embedding_provider=gemini")
+    client = _get_gemini_client()
+    response = client.models.embed_content(
+        model=settings.gemini_embed_model,
+        contents=texts,
+        config={"output_dimensionality": settings.embedding_dim},
+    )
+    embeddings = [e.values for e in response.embeddings]
+    for emb in embeddings:
+        _validate_dim(emb)
+    return embeddings
 
 
 def clear_embedding_cache() -> int:
