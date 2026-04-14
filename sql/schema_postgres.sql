@@ -386,6 +386,7 @@ select
     f.similarity, f.keyword_rank,
     (
         f.score
+        * m.importance
         * (1.0 + ln(m.access_count + 1.0) * 0.1)
         * m.confidence
         * (1.0 + g.graph_boost * 0.2)
@@ -726,6 +727,71 @@ BEGIN
     LIMIT result_limit;
 END;
 $$;
+
+-- ── Hebbian decay + potentiation ───────────────────────────────────────
+-- Memories not accessed within 7 days decay in importance.
+-- Potentiated memories (access_count >= 10) decay much slower (LTP).
+-- Floor at 0.05: keeps memories in the "unconscious" but retrievable.
+-- Run as a batch job (cron, CLI, or MCP tool) -- not on-access.
+
+CREATE OR REPLACE FUNCTION apply_hebbian_decay(
+    target_profile text,
+    batch_size int DEFAULT 1000
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+    rows_affected integer;
+BEGIN
+    WITH decay_targets AS (
+        SELECT id FROM memories
+        WHERE profile = target_profile
+          AND importance > 0.05
+          AND (expires_at IS NULL OR expires_at > now())
+          AND (last_accessed_at IS NULL
+               OR last_accessed_at < now() - interval '7 days')
+        LIMIT batch_size
+    )
+    UPDATE memories
+    SET importance = greatest(0.05,
+        importance * power(
+            CASE WHEN access_count >= 10 THEN 0.99 ELSE 0.95 END,
+            extract(epoch from (now() - coalesce(last_accessed_at, created_at))) / 2592000.0
+        )
+    )
+    WHERE id IN (SELECT id FROM decay_targets);
+
+    GET DIAGNOSTICS rows_affected = ROW_COUNT;
+    RETURN rows_affected;
+END;
+$$;
+
+-- ── Audit log (append-only event trail) ────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_time timestamptz NOT NULL DEFAULT now(),
+    profile text NOT NULL,
+    operation text NOT NULL,              -- store | search | delete | update | re_embed
+    resource_id uuid,                     -- memories.id if applicable
+    outcome text NOT NULL DEFAULT 'success',
+    source text,                          -- claude-code | cursor | gateway | cli
+    embedding_model text,
+    tokens_used integer,
+    cost_usd numeric(10,6),
+    result_ids uuid[],                    -- memory IDs returned by search
+    result_count integer,
+    query_hash text,                      -- sha256 of query text (not the query itself)
+    metadata jsonb DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_profile_time
+    ON audit_log (profile, event_time DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_resource
+    ON audit_log (resource_id) WHERE resource_id IS NOT NULL;
 
 -- ── Entity graph (spreading activation substrate) ─────────────────────
 

@@ -245,6 +245,7 @@ def hybrid_search(
     source: str | None = None,
     graph_depth: int = 0,
     profiles: list[str] | None = None,
+    extract_facts: bool = False,
 ) -> list[dict[str, Any]]:
     """Search memories in the active profile by meaning and keywords (hybrid search).
 
@@ -260,6 +261,10 @@ def hybrid_search(
         graph_depth: Follow relationship edges N hops deep (0 = no graph, default).
         profiles: Search across multiple profiles (e.g. ["personal", "shared"]).
                   When set, overrides the active profile for this search.
+        extract_facts: When True, runs an LLM over retrieved memories to extract
+                  query-relevant facts. Returns focused facts instead of raw
+                  memories. Requires OGHAM_EXTRACT_PROVIDER and API key.
+                  Default: False (returns verbatim memories).
     """
     _require_limit(limit)
     from ogham.service import search_memories_enriched
@@ -272,6 +277,7 @@ def hybrid_search(
         source=source,
         graph_depth=graph_depth,
         profiles=profiles,
+        extract_facts=extract_facts,
     )
 
 
@@ -299,7 +305,15 @@ def delete_memory(memory_id: str) -> dict[str, Any]:
     Args:
         memory_id: The UUID of the memory to delete.
     """
+    from ogham.database import emit_audit_event
+
     success = db_delete(memory_id, profile=_active_profile)
+    emit_audit_event(
+        profile=_active_profile,
+        operation="delete",
+        resource_id=memory_id,
+        outcome="success" if success else "not_found",
+    )
     if success:
         return {"status": "deleted", "id": memory_id}
     return {"status": "not_found", "id": memory_id}
@@ -332,7 +346,15 @@ def update_memory(
     if not updates:
         return {"status": "no_changes", "id": memory_id}
 
+    from ogham.database import emit_audit_event
+
     result = db_update(memory_id, updates, profile=_active_profile)
+    emit_audit_event(
+        profile=_active_profile,
+        operation="update",
+        resource_id=memory_id,
+        metadata={"fields_updated": list(updates.keys())},
+    )
     return {"status": "updated", "id": result["id"], "updated_at": result["updated_at"]}
 
 
@@ -614,6 +636,84 @@ def find_related(
         relationship_types=relationship_types,
         limit=limit,
     )
+
+
+@mcp.tool
+@log_timing("suggest_connections")
+def suggest_connections(
+    memory_id: str,
+    min_shared_entities: int = 2,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Suggest memories that share entities but have no explicit relationship.
+
+    Surfaces "hidden" connections through the entity graph -- memories that
+    mention the same people, projects, or concepts but were never explicitly
+    linked. Useful for discovering cross-session context an agent might miss.
+
+    Args:
+        memory_id: The UUID of the starting memory.
+        min_shared_entities: Minimum entities in common (default 2).
+        limit: Maximum suggestions (default 10).
+    """
+    from ogham.database import get_backend
+
+    backend = get_backend()
+    try:
+        rows = backend._execute(
+            """
+            WITH target_entities AS (
+                SELECT entity_id FROM memory_entities
+                WHERE memory_id = %(memory_id)s::uuid
+            ),
+            shared AS (
+                SELECT
+                    me.memory_id,
+                    count(*) as shared_count,
+                    array_agg(e.entity_type || ':' || e.canonical_name) as shared_entities
+                FROM memory_entities me
+                JOIN target_entities te ON te.entity_id = me.entity_id
+                JOIN entities e ON e.id = me.entity_id
+                WHERE me.memory_id != %(memory_id)s::uuid
+                  AND me.profile = %(profile)s
+                GROUP BY me.memory_id
+                HAVING count(*) >= %(min_shared)s
+            ),
+            unlinked AS (
+                SELECT s.*
+                FROM shared s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memory_relationships mr
+                    WHERE (mr.source_id = %(memory_id)s::uuid AND mr.target_id = s.memory_id)
+                       OR (mr.target_id = %(memory_id)s::uuid AND mr.source_id = s.memory_id)
+                )
+            )
+            SELECT
+                u.memory_id::text as id,
+                u.shared_count,
+                u.shared_entities,
+                m.content,
+                m.created_at,
+                m.tags
+            FROM unlinked u
+            JOIN memories m ON m.id = u.memory_id
+            WHERE m.expires_at IS NULL OR m.expires_at > now()
+            ORDER BY u.shared_count DESC, m.created_at DESC
+            LIMIT %(limit)s
+            """,
+            {
+                "memory_id": memory_id,
+                "profile": _active_profile,
+                "min_shared": min_shared_entities,
+                "limit": limit,
+            },
+            fetch="all",
+        )
+    except Exception as e:
+        logger.debug("suggest_connections failed: %s", e)
+        return []
+
+    return rows or []
 
 
 @mcp.tool

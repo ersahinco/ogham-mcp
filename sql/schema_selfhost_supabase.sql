@@ -778,6 +778,30 @@ BEGIN
 END;
 $$;
 
+-- ── Audit log (append-only event trail) ────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_time timestamptz NOT NULL DEFAULT now(),
+    profile text NOT NULL,
+    operation text NOT NULL,
+    resource_id uuid,
+    outcome text NOT NULL DEFAULT 'success',
+    source text,
+    embedding_model text,
+    tokens_used integer,
+    cost_usd numeric(10,6),
+    result_ids uuid[],
+    result_count integer,
+    query_hash text,
+    metadata jsonb DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_profile_time
+    ON audit_log (profile, event_time DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_resource
+    ON audit_log (resource_id) WHERE resource_id IS NOT NULL;
+
 -- ── Entity graph (spreading activation substrate) ─────────────────────
 
 CREATE TABLE IF NOT EXISTS entities (

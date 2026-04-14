@@ -52,32 +52,20 @@ def store(
     output_json: bool = typer.Option(False, "--json", help="Output JSON instead of rich text"),
 ):
     """Store a new memory."""
-    from datetime import datetime, timedelta, timezone
-
     from ogham.config import settings
-    from ogham.database import get_profile_ttl
-    from ogham.database import store_memory as db_store
-    from ogham.embeddings import generate_embedding
+    from ogham.service import store_memory_enriched
 
     target = profile or settings.default_profile
-    embedding = generate_embedding(content)
 
     merged_tags = list(tags or [])
     if tags_csv:
         merged_tags.extend(t.strip() for t in tags_csv.split(",") if t.strip())
 
-    ttl_days = get_profile_ttl(target)
-    expires_at = None
-    if ttl_days is not None:
-        expires_at = (datetime.now(timezone.utc) + timedelta(days=ttl_days)).isoformat()
-
-    result = db_store(
+    result = store_memory_enriched(
         content=content,
-        embedding=embedding,
         profile=target,
         source=source,
         tags=merged_tags or None,
-        expires_at=expires_at,
     )
 
     if output_json:
@@ -85,8 +73,13 @@ def store(
         return
 
     console.print(f"[green]Stored memory {result['id']} in profile '{target}'[/green]")
-    if expires_at:
-        console.print(f"[dim]Expires: {expires_at[:19]}[/dim]")
+    if result.get("expires_at"):
+        console.print(f"[dim]Expires: {result['expires_at'][:19]}[/dim]")
+    if result.get("conflicts"):
+        console.print(f"[yellow]{result['conflict_warning']}[/yellow]")
+        for c in result["conflicts"]:
+            preview = c["content_preview"][:80]
+            console.print(f"  [dim]{c['id'][:8]}... ({c['similarity']:.0%}) {preview}[/dim]")
 
 
 @app.command()
@@ -188,25 +181,39 @@ def search(
     tags: Optional[list[str]] = typer.Option(None, "--tag", help="Filter by tag"),
     tags_csv: Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
     output_json: bool = typer.Option(False, "--json", help="Output JSON instead of rich table"),
+    extract: bool = typer.Option(False, "--extract", help="Extract query-relevant facts via LLM"),
 ):
     """Search memories by meaning and keywords (hybrid search)."""
     from ogham.config import settings
-    from ogham.database import hybrid_search_memories
-    from ogham.embeddings import generate_embedding
 
     merged_tags = list(tags or [])
     if tags_csv:
         merged_tags.extend(t.strip() for t in tags_csv.split(",") if t.strip())
 
     target = profile or settings.default_profile
-    embedding = generate_embedding(query)
-    results = hybrid_search_memories(
-        query_text=query,
-        query_embedding=embedding,
-        profile=target,
-        limit=limit,
-        tags=merged_tags or None,
-    )
+
+    if extract:
+        from ogham.service import search_memories_enriched
+
+        results = search_memories_enriched(
+            query=query,
+            profile=target,
+            limit=limit,
+            tags=merged_tags or None,
+            extract_facts=True,
+        )
+    else:
+        from ogham.database import hybrid_search_memories
+        from ogham.embeddings import generate_embedding
+
+        embedding = generate_embedding(query)
+        results = hybrid_search_memories(
+            query_text=query,
+            query_embedding=embedding,
+            profile=target,
+            limit=limit,
+            tags=merged_tags or None,
+        )
 
     if not results:
         if output_json:
@@ -497,6 +504,74 @@ def _register_subcommands():
 
 
 _register_subcommands()
+
+
+@app.command()
+def decay(
+    profile: str = typer.Option(None, help="Profile to decay"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Count eligible memories without decaying"
+    ),
+    batch_size: int = typer.Option(1000, help="Max memories to decay per run"),
+):
+    """Apply Hebbian decay to memories that haven't been accessed recently."""
+    from ogham.config import settings
+    from ogham.database import apply_hebbian_decay, count_decay_eligible
+
+    target = profile or settings.default_profile
+
+    if dry_run:
+        eligible = count_decay_eligible(target)
+        console.print(f"[cyan]{eligible} memories eligible for decay in profile '{target}'[/cyan]")
+        return
+
+    decayed = apply_hebbian_decay(target, batch_size=batch_size)
+    console.print(f"[green]Decayed {decayed} memories in profile '{target}'[/green]")
+
+
+@app.command()
+def audit(
+    profile: str = typer.Option(None, help="Profile to query"),
+    limit: int = typer.Option(20, help="Max events"),
+    operation: str = typer.Option(None, help="Filter by operation (store/search/delete/update)"),
+    output_json: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """View audit trail for a memory profile."""
+    from ogham.config import settings
+    from ogham.database import query_audit_log
+
+    target = profile or settings.default_profile
+    events = query_audit_log(target, limit=limit, operation=operation)
+
+    if not events:
+        if output_json:
+            print("[]")
+        else:
+            console.print("[yellow]No audit events found.[/yellow]")
+        return
+
+    if output_json:
+        print(json.dumps(events, default=str))
+        return
+
+    table = Table(title=f"Audit Trail ({len(events)} events)")
+    table.add_column("Time", width=19)
+    table.add_column("Op", width=8)
+    table.add_column("Resource", width=10)
+    table.add_column("Outcome", width=8)
+    table.add_column("Results", width=8)
+    table.add_column("Source", width=12)
+
+    for e in events:
+        event_time = str(e.get("event_time", ""))[:19]
+        op = e.get("operation", "")
+        resource = str(e.get("resource_id", "") or "")[:10]
+        outcome = e.get("outcome", "")
+        result_count = str(e.get("result_count", "") or "")
+        source_val = e.get("source", "") or ""
+        table.add_row(event_time, op, resource, outcome, result_count, source_val)
+
+    console.print(table)
 
 
 def main():

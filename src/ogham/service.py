@@ -3,18 +3,25 @@
 Used by both the MCP tool layer (tools/memory.py) and the gateway REST API.
 Handles: content validation, date extraction, entity extraction,
 importance scoring, embedding generation, surprise scoring,
-storage, and auto-linking.
+storage, auto-linking, and optional read-time fact extraction.
 """
 
+import hashlib
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ogham.data.loader import get_direction_words
 from ogham.database import auto_link_memory as db_auto_link
+from ogham.database import (
+    emit_audit_event,
+    hybrid_search_memories,
+    record_access,
+    spread_entity_activation,
+)
 from ogham.database import get_profile_ttl as db_get_profile_ttl
-from ogham.database import hybrid_search_memories, record_access, spread_entity_activation
 from ogham.database import store_memory as db_store
 from ogham.embeddings import generate_embedding
 from ogham.extraction import (
@@ -25,6 +32,7 @@ from ogham.extraction import (
     extract_recurrence,
     has_temporal_intent,
     is_broad_summary_query,
+    is_cross_reference_query,
     is_multi_hop_temporal,
     is_ordering_query,
     resolve_temporal_query,
@@ -77,13 +85,19 @@ def store_memory_enriched(
 
     # Compute importance score from content signals
     importance = compute_importance(content, tags)
+    # Preserve original importance for Hebbian decay recovery
+    if metadata is None:
+        metadata = {}
+    metadata["original_importance"] = importance
 
     # Generate embedding (skip if pre-computed, e.g. from gateway cache)
     if embedding is None:
         embedding = generate_embedding(content)
 
-    # Compute surprise score: how novel is this vs existing memories?
+    # Compute surprise score + detect conflicts (>75% similarity)
     surprise = 0.5
+    conflicts: list[dict[str, Any]] = []
+    conflict_threshold = float(os.environ.get("OGHAM_CONFLICT_THRESHOLD", "0.75"))
     try:
         existing = hybrid_search_memories(
             query_text=content[:200],
@@ -94,6 +108,16 @@ def store_memory_enriched(
         if existing:
             max_sim = max(r.get("similarity", 0) for r in existing)
             surprise = round(1.0 - max_sim, 3)
+            for r in existing:
+                sim = r.get("similarity", 0)
+                if sim >= conflict_threshold:
+                    conflicts.append(
+                        {
+                            "id": r.get("id", ""),
+                            "similarity": round(sim, 3),
+                            "content_preview": r.get("content", "")[:200],
+                        }
+                    )
     except Exception:
         logger.debug("Surprise scoring skipped: search failed, using default 0.5")
 
@@ -127,6 +151,13 @@ def store_memory_enriched(
         "surprise": surprise,
     }
 
+    if conflicts:
+        response["conflicts"] = conflicts
+        response["conflict_warning"] = (
+            f"Found {len(conflicts)} existing memory(s) with >{int(conflict_threshold * 100)}% "
+            "similarity. Consider using update_memory instead of storing a duplicate."
+        )
+
     # Auto-link
     if auto_link:
         links_created = db_auto_link(
@@ -136,7 +167,102 @@ def store_memory_enriched(
         )
         response["links_created"] = links_created
 
+    # Audit trail
+    emit_audit_event(
+        profile=profile,
+        operation="store",
+        resource_id=str(result["id"]),
+        source=source,
+        metadata={"importance": importance, "surprise": surprise},
+    )
+
     return response
+
+
+def _read_time_extract(query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract query-relevant facts from retrieved memories using an LLM.
+
+    Opt-in read-time extraction: the extractor sees both the query and the
+    retrieved context, producing focused facts for the caller. The raw
+    memories are still stored verbatim -- this is a presentation optimisation,
+    not a storage transformation.
+
+    Provider/model controlled via env vars:
+        OGHAM_EXTRACT_PROVIDER: "ollama", "gemini" (default), or "openai"
+        OGHAM_EXTRACT_MODEL: model name (defaults per provider)
+    """
+    if not results:
+        return results
+
+    parts = []
+    for i, r in enumerate(results):
+        content = r.get("content", "")
+        parts.append(f"## Memory {i + 1}\n{content}")
+    bundle = "\n\n".join(parts)
+
+    prompt = (
+        "Given a user's question and retrieved memory context, extract the facts "
+        "most relevant to answering the question.\n\n"
+        f"Question: {query}\n\n"
+        f"Memory context:\n{bundle}\n\n"
+        "Extract relevant facts as a concise bulleted list. Preserve specific "
+        "details: names, numbers, dates, locations. If the context contains no "
+        'relevant information, respond with "No relevant facts found."'
+    )
+
+    provider = os.environ.get("OGHAM_EXTRACT_PROVIDER", "gemini")
+    model = os.environ.get("OGHAM_EXTRACT_MODEL", "")
+
+    try:
+        if provider == "ollama":
+            import httpx
+
+            model = model or "gemma3:1b"
+            ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            resp = httpx.post(
+                f"{ollama_host}/api/chat",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                },
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            facts = resp.json().get("message", {}).get("content", "")
+        elif provider == "openai":
+            from openai import OpenAI
+
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            model = model or "gpt-4o-mini"
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            facts = response.choices[0].message.content or ""
+        else:
+            from google import genai
+
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            client = genai.Client(api_key=api_key)
+            model = model or "gemini-2.5-flash"
+            response = client.models.generate_content(model=model, contents=prompt)
+            facts = response.text or ""
+    except Exception:
+        logger.warning("Read-time extraction failed, returning raw results")
+        return results
+
+    return [
+        {
+            "id": "extracted-facts",
+            "content": facts,
+            "metadata": {
+                "source_ids": [r.get("id", "") for r in results],
+                "extraction_model": f"{provider}:{model}",
+            },
+            "tags": ["extracted"],
+        }
+    ]
 
 
 def search_memories_enriched(
@@ -148,6 +274,7 @@ def search_memories_enriched(
     graph_depth: int = 0,
     embedding: list[float] | None = None,
     profiles: list[str] | None = None,
+    extract_facts: bool = False,
 ) -> list[dict[str, Any]]:
     """Full search pipeline: retrieve, rerank (optional), record access.
 
@@ -155,6 +282,12 @@ def search_memories_enriched(
     1. _search_memories_raw: intent detection, retrieval, temporal/entity enrichment
     2. _maybe_rerank: optional FlashRank cross-encoder reranking (RERANK_ENABLED=true)
     3. Record access for retrieved memories
+    4. (opt-in) _read_time_extract: LLM-powered fact extraction from results
+
+    Args:
+        extract_facts: When True, runs retrieved memories through an LLM to
+            extract query-relevant facts. Returns a single extracted-facts
+            result instead of raw memories. Default: False (verbatim results).
     """
     results = _search_memories_raw(
         query,
@@ -171,6 +304,19 @@ def search_memories_enriched(
         results = _maybe_rerank(query, results, limit)
         results = _reorder_for_attention(results)
         record_access([r["id"] for r in results])
+
+    # Audit trail
+    result_ids = [str(r["id"]) for r in results] if results else []
+    emit_audit_event(
+        profile=profile,
+        operation="search",
+        result_ids=result_ids or None,
+        result_count=len(results),
+        query_hash=hashlib.sha256(query.encode()).hexdigest()[:16],
+    )
+
+    if extract_facts and results:
+        results = _read_time_extract(query, results)
 
     return results
 
@@ -357,7 +503,7 @@ def _search_memories_raw(
     # for broader coverage of scattered facts across the timeline.
     elastic_limit = limit * 2
 
-    # Ordering queries: strided retrieval + entity threading + chronological sort
+    # Ordering queries: strided retrieval + activation + chronological sort
     if is_ordering_query(query):
         results = hybrid_search_memories(
             query_text=search_query,
@@ -371,6 +517,14 @@ def _search_memories_raw(
         )
         if results:
             results = _strided_retrieval(results, elastic_limit * 2)
+        results = _merge_activation_results(
+            results or [],
+            query_entity_tags,
+            profile,
+            elastic_limit * 2,
+            graph_fraction=0.5,
+        )
+        if results:
             for r in results:
                 r["_sort_date"] = _extract_memory_date(r) or "9999"
             results.sort(key=lambda r: r["_sort_date"])
@@ -396,16 +550,31 @@ def _search_memories_raw(
                 )
             return results
 
-    # Cross-reference queries: spreading activation infrastructure is deployed
-    # (migration 020, spread_entity_activation_memories PL/pgSQL) but disabled
-    # pending production data with cross-session entity diversity. BEAM's
-    # single-chat profiles cause cluster saturation — activation is uniform.
-    # Enable via ENABLE_GRAPH_ACTIVATION when real multi-session data is available.
-    # if is_cross_reference_query(query):
-    #     results = hybrid_search(...)
-    #     return _merge_activation_results(results, query_entity_tags, profile, ...)
+    # Cross-reference queries: spreading activation for entity bridging.
+    # Two parallel signals: hybrid search (semantic + keyword) + entity graph
+    # walk (spreading activation). Merge boosts hybrid results by activation
+    # score but limits bridge doc injection (graph_fraction=0.15) to avoid
+    # displacing the gold answer at rank 1.
+    if is_cross_reference_query(query):
+        results = hybrid_search_memories(
+            query_text=search_query,
+            query_embedding=embedding,
+            profile=profile,
+            limit=elastic_limit * 3,
+            tags=tags,
+            source=source,
+            profiles=profiles,
+            query_entity_tags=query_entity_tags,
+        )
+        return _merge_activation_results(
+            results or [],
+            query_entity_tags,
+            profile,
+            elastic_limit,
+            graph_fraction=0.15,
+        )
 
-    # Broad summary queries: strided retrieval for timeline diversity.
+    # Broad summary queries: strided retrieval + activation for entity diversity.
     if is_broad_summary_query(query):
         results = hybrid_search_memories(
             query_text=search_query,
@@ -419,7 +588,13 @@ def _search_memories_raw(
         )
         if results:
             results = _strided_retrieval(results, elastic_limit)
-
+        results = _merge_activation_results(
+            results or [],
+            query_entity_tags,
+            profile,
+            elastic_limit,
+            graph_fraction=0.4,
+        )
         return results
 
     # Standard search path — fetch wider pool for TDR density check.
@@ -1325,13 +1500,88 @@ def _graph_rerank(
     return results
 
 
+_DENSITY_CACHE: dict[str, tuple[float, float]] = {}
+_DENSITY_TTL_SECONDS = 300.0
+
+
+def _profile_graph_density(profile: str) -> float:
+    """Measure entity graph density (edges per entity) for a profile.
+
+    Returns edges-per-entity ratio. Dense profiles (single-chat, BEAM-style)
+    typically return 2-4. Sparse multi-session profiles return closer to 1.
+
+    Cached for 5 minutes per profile to avoid repeated queries. Falls back
+    to 2.0 (neutral) on error.
+    """
+    import time as _time
+
+    now = _time.time()
+    cached = _DENSITY_CACHE.get(profile)
+    if cached and (now - cached[1]) < _DENSITY_TTL_SECONDS:
+        return cached[0]
+
+    try:
+        from ogham.database import get_backend
+
+        backend = get_backend()
+        rows = backend._execute(
+            """SELECT
+                 count(distinct entity_id)::float as entities,
+                 count(*)::float as edges
+               FROM memory_entities
+               WHERE profile = %(profile)s""",
+            {"profile": profile},
+            fetch="one",
+        )
+        if rows and rows.get("entities", 0) > 0:
+            density = float(rows["edges"]) / float(rows["entities"])
+        else:
+            density = 2.0
+    except Exception:
+        density = 2.0
+
+    _DENSITY_CACHE[profile] = (density, now)
+    return density
+
+
+def _density_adaptive_activation_weight(
+    profile: str,
+    base_weight: float = 0.15,
+    min_weight: float = 0.05,
+    max_weight: float = 0.30,
+) -> float:
+    """Scale activation weight inversely with graph density.
+
+    Pattern from Shodh (varun29ankuS/shodh-memory): sparse entity graphs
+    have higher-signal edges (Hebbian-pruned), dense graphs have more
+    noise. This measures the profile's edges/entity ratio and scales
+    activation_weight accordingly:
+
+    - Sparse (<=1.5 edges/entity): scale to max_weight (0.30) -- trust graph more
+    - Medium (1.5-2.5): use base_weight (0.15)
+    - Dense (>=3.5 edges/entity): scale to min_weight (0.05) -- reduce graph influence
+
+    Directly mitigates cluster saturation on single-chat benchmarks.
+    """
+    density = _profile_graph_density(profile)
+
+    if density <= 1.5:
+        return max_weight
+    if density >= 3.5:
+        return min_weight
+    # Linear interpolation between max_weight @ 1.5 and min_weight @ 3.5
+    # range width = 2.0, distance from sparse end = (density - 1.5)
+    frac = (density - 1.5) / 2.0
+    return max_weight - frac * (max_weight - min_weight)
+
+
 def _merge_activation_results(
     hybrid_results: list[dict],
     query_entity_tags: list[str] | None,
     profile: str,
     limit: int,
     graph_fraction: float = 0.3,
-    activation_weight: float = 0.15,
+    activation_weight: float | None = None,
 ) -> list[dict]:
     """Merge hybrid search results with spreading activation graph walk.
 
@@ -1339,11 +1589,24 @@ def _merge_activation_results(
     1. Hybrid search (semantic + keyword) -> relevance score
     2. Entity graph walk (spreading activation) -> activation score
 
+    When activation_weight is None (default), measures profile graph density
+    and scales weight adaptively (dense profiles get less graph influence).
+    Pass a float to override.
+
     Memories in both sets get boosted. Graph-only memories (no hybrid match)
     enter as "bridge" documents at graph_fraction of the result set.
     """
     if not query_entity_tags:
         return hybrid_results[:limit]
+
+    # Density-adaptive activation weight (Shodh-inspired).
+    if activation_weight is None:
+        activation_weight = _density_adaptive_activation_weight(profile)
+        logger.debug(
+            "Density-adaptive activation_weight for profile=%s: %.3f",
+            profile,
+            activation_weight,
+        )
 
     try:
         activated = spread_entity_activation(

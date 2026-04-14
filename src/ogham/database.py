@@ -248,6 +248,24 @@ def count_expired(profile: str) -> int:
     return get_backend().count_expired(profile)
 
 
+def apply_hebbian_decay(profile: str, batch_size: int = 1000) -> int:
+    return get_backend().apply_hebbian_decay(profile, batch_size)
+
+
+def count_decay_eligible(profile: str) -> int:
+    return get_backend().count_decay_eligible(profile)
+
+
+def emit_audit_event(**kwargs: Any) -> None:
+    get_backend().emit_audit_event(**kwargs)
+
+
+def query_audit_log(
+    profile: str, limit: int = 50, operation: str | None = None
+) -> list[dict[str, Any]]:
+    return get_backend().query_audit_log(profile, limit, operation)
+
+
 def spread_entity_activation(
     entity_tags: list[str],
     profile: str,

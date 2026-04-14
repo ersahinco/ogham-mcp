@@ -4,6 +4,61 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.0] - 2026-04-14 -- Cognitive memory: audit, decay, spreading activation
+
+### Added
+
+- **Audit trails.** Append-only `audit_log` table records every store, search, delete, and update. Query via `ogham audit` CLI or the new MCP tool. Useful for GDPR Article 15 subject access requests and cost governance. Runs in the same Postgres instance as memories -- no extra infrastructure.
+
+- **Hebbian decay and potentiation.** New `apply_hebbian_decay()` SQL function. Memories not accessed within 7 days lose importance over time (5% per 30-day idle period). Memories accessed 10+ times become "potentiated" and decay much slower (1% per 30 days). Floor at 0.05 keeps decayed memories findable but low-ranked. Run as a batch job: `ogham decay --dry-run` first to preview, then `ogham decay`. Schedule via system cron or pg_cron. Based on Hebb (1949) and Bi & Poo (2001).
+
+- **Spreading activation.** Entity graph walk now informs search for cross-reference, ordering, and summary queries. The SQL function `spread_entity_activation_memories()` walks the bipartite entity/memory graph at query time, merging activation scores with hybrid search results. Based on Collins & Loftus (1975).
+
+- **Density-adaptive activation weight.** The graph signal adapts to the profile's entity density at runtime. Sparse multi-session profiles get more graph influence (up to 0.30), dense single-chat profiles get less (0.05). Mitigates cluster saturation where uniform activation degrades retrieval.
+
+- **Read-time fact extraction (opt-in).** `hybrid_search(extract_facts=True)` runs an LLM over retrieved memories to produce focused facts. Supports Ollama (local), Gemini, and OpenAI. Default off -- verbatim results remain the ground truth.
+
+- **Conflict detection on store.** Stores over 75% similar to an existing memory trigger a warning with the conflict IDs and content preview. Threshold configurable via `OGHAM_CONFLICT_THRESHOLD`. The CLI `ogham store` now goes through the full enrichment pipeline (entity extraction, importance scoring, auto-link) like the MCP tool.
+
+- **Suggest connections.** New MCP tool `suggest_connections` finds memories that share entities but have no explicit relationship edge -- surfaces hidden connections that an agent might otherwise miss.
+
+- **Multilingual entity enrichment.** Event, preference, quantity, and possessive triggers expanded across all 18 supported languages (German, French, Spanish, Italian, Portuguese, Dutch, Russian, Polish, Turkish, Irish, Arabic, Hindi, Japanese, Korean, Chinese, Ukrainian). Weddings in Japanese, preferences in Arabic, quantities in Russian now tag at ingest time.
+
+- **`ogham audit` and `ogham decay` CLI commands.** Query the audit log and run Hebbian decay batch jobs without writing SQL.
+
+- **Schema parity test.** Uses Python `inspect.unwrap()` to verify the backend's method signatures match the SQL function signatures. Catches "Python sends N parameters, SQL expects M" bugs at CI time.
+
+- **CI smoke test.** GitHub Action applies `schema_postgres.sql` to an ephemeral Postgres, verifies `hybrid_search_memories` signature, then calls it from Python with all parameters. Also runs the upgrade path (base schema + all migrations).
+
+### Changed
+
+- `hybrid_search_memories` relevance formula now includes `m.importance` as a multiplier, an entity overlap boost, and an exponential recency decay term. Same 12 parameters as v0.9.2.
+
+### Fixed
+
+- **Migration 021: dimension-aware halfvec casts.** Previous migrations hardcoded `halfvec(512)` in function bodies, which broke non-512 dimension providers (bge-m3 at 1024, OpenAI text-embedding-3-large at 3072). The new migration introspects the actual `memories.embedding` dimension via `pg_attribute` + `format_type` and templates the cast via `format()` + `EXECUTE`. The HNSW index rebuild is gated behind an opt-in session GUC (`SET ogham.rebuild_hnsw = 'on'`) because index recreation on a populated table is expensive.
+
+### Upgrading
+
+Apply `sql/migrations/021_dim_aware_halfvec.sql` to your database. For Postgres/Neon:
+
+```bash
+psql "$DATABASE_URL" -f sql/migrations/021_dim_aware_halfvec.sql
+```
+
+If you're running at a non-512 dimension or want HNSW queries to use the new cast:
+
+```bash
+psql "$DATABASE_URL" -c "SET ogham.rebuild_hnsw = 'on';" -f sql/migrations/021_dim_aware_halfvec.sql
+```
+
+Supabase users: paste the migration body into the SQL Editor.
+
+### Credits
+
+- **Josh Rothenberg** ([@ninthhousestudios](https://github.com/ninthhousestudios)) for issues #22, #24, and the dimension-aware halfvec pattern in PR #25.
+- **Bram** ([@bramvera](https://github.com/bramvera)) for PRs #17, #21, and #23 catching `hybrid_search_memories` parameter mismatches.
+
 ## [0.9.1] - 2026-04-08
 
 ### Fixed

@@ -152,45 +152,72 @@ def test_cli_openapi(tmp_path):
 
 
 def test_cli_store():
-    """ogham store should store a memory"""
+    """ogham store should store a memory via enriched pipeline"""
     from ogham.cli import app
 
-    with (
-        patch("ogham.embeddings.generate_embedding") as mock_embed,
-        patch("ogham.database.store_memory") as mock_store,
-        patch("ogham.database.get_profile_ttl") as mock_ttl,
-    ):
-        mock_embed.return_value = [0.1] * 1024
-        mock_store.return_value = {"id": "abc123", "created_at": "2026-01-01T00:00:00Z"}
-        mock_ttl.return_value = None
-        result = runner.invoke(app, ["store", "test memory", "--tag", "tag1"])
+    with patch("ogham.service.store_memory_enriched") as mock_store:
+        mock_store.return_value = {
+            "status": "stored",
+            "id": "abc123",
+            "profile": "default",
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": None,
+            "importance": 0.5,
+            "surprise": 0.5,
+        }
+        result = runner.invoke(app, ["store", "test memory content here", "--tag", "tag1"])
 
     assert result.exit_code == 0
     assert "abc123" in result.output
     mock_store.assert_called_once()
     call_kwargs = mock_store.call_args[1]
-    assert call_kwargs["content"] == "test memory"
+    assert call_kwargs["content"] == "test memory content here"
     assert call_kwargs["source"] == "cli"
 
 
 def test_cli_store_with_ttl():
-    """ogham store should set expires_at when profile has TTL"""
+    """ogham store should show expiry when profile has TTL"""
     from ogham.cli import app
 
-    with (
-        patch("ogham.embeddings.generate_embedding") as mock_embed,
-        patch("ogham.database.store_memory") as mock_store,
-        patch("ogham.database.get_profile_ttl") as mock_ttl,
-    ):
-        mock_embed.return_value = [0.1] * 1024
-        mock_store.return_value = {"id": "abc123", "created_at": "2026-01-01T00:00:00Z"}
-        mock_ttl.return_value = 90
-        result = runner.invoke(app, ["store", "work note", "--profile", "work"])
+    with patch("ogham.service.store_memory_enriched") as mock_store:
+        mock_store.return_value = {
+            "status": "stored",
+            "id": "abc123",
+            "profile": "work",
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2026-04-01T00:00:00Z",
+            "importance": 0.5,
+            "surprise": 0.5,
+        }
+        result = runner.invoke(app, ["store", "work note content here", "--profile", "work"])
 
     assert result.exit_code == 0
-    call_kwargs = mock_store.call_args[1]
-    assert call_kwargs["expires_at"] is not None
     assert "Expires" in result.output
+
+
+def test_cli_store_conflict_warning():
+    """ogham store should display conflict warning when duplicates found"""
+    from ogham.cli import app
+
+    with patch("ogham.service.store_memory_enriched") as mock_store:
+        mock_store.return_value = {
+            "status": "stored",
+            "id": "new123",
+            "profile": "default",
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": None,
+            "importance": 0.5,
+            "surprise": 0.2,
+            "conflicts": [
+                {"id": "existing456", "similarity": 0.82, "content_preview": "similar content"},
+            ],
+            "conflict_warning": "Found 1 existing memory(s) with >75% similarity.",
+        }
+        result = runner.invoke(app, ["store", "test duplicate content here"])
+
+    assert result.exit_code == 0
+    assert "new123" in result.output
+    assert "75%" in result.output
 
 
 def test_cli_serve():

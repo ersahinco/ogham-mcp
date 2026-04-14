@@ -468,3 +468,17 @@ class SupabaseBackend:
 
         result = self._get_client().rpc("get_related_memories", params).execute()
         return result.data
+
+    def apply_hebbian_decay(self, profile: str, batch_size: int = 1000) -> int:
+        return 0
+
+    def count_decay_eligible(self, profile: str) -> int:
+        return 0
+
+    def emit_audit_event(self, **kwargs: Any) -> None:
+        pass  # Supabase audit: add when RPC function exists
+
+    def query_audit_log(
+        self, profile: str, limit: int = 50, operation: str | None = None
+    ) -> list[dict[str, Any]]:
+        return []  # Supabase audit: add when RPC function exists

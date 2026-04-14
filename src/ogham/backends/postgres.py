@@ -338,6 +338,101 @@ class PostgresBackend:
         )
         return row is not None
 
+    # ── Hebbian Decay ──────────────────────────────────────────────────
+
+    def apply_hebbian_decay(self, profile: str, batch_size: int = 1000) -> int:
+        """Run Hebbian decay on a profile. Returns count of decayed memories."""
+        try:
+            result = self._execute(
+                "SELECT apply_hebbian_decay(%(profile)s, %(batch_size)s) AS decayed",
+                {"profile": profile, "batch_size": batch_size},
+                fetch="scalar",
+            )
+            return result or 0
+        except Exception:
+            logger.debug("Hebbian decay skipped (function may not exist yet)")
+            return 0
+
+    def count_decay_eligible(self, profile: str) -> int:
+        """Dry-run: count memories eligible for decay."""
+        try:
+            result = self._execute(
+                """SELECT count(*)::integer FROM memories
+                   WHERE profile = %(profile)s
+                     AND importance > 0.05
+                     AND (expires_at IS NULL OR expires_at > now())
+                     AND (last_accessed_at IS NULL
+                          OR last_accessed_at < now() - interval '7 days')""",
+                {"profile": profile},
+                fetch="scalar",
+            )
+            return result or 0
+        except Exception:
+            return 0
+
+    # ── Audit ─────────────────────────────────────────────────────────
+
+    def emit_audit_event(
+        self,
+        profile: str,
+        operation: str,
+        resource_id: str | None = None,
+        outcome: str = "success",
+        source: str | None = None,
+        result_ids: list[str] | None = None,
+        result_count: int | None = None,
+        query_hash: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Append-only audit event. Fails silently if audit_log table missing."""
+        try:
+            self._execute(
+                """INSERT INTO audit_log
+                   (profile, operation, resource_id, outcome, source,
+                    result_ids, result_count, query_hash, metadata)
+                   VALUES (%(profile)s, %(operation)s, %(resource_id)s, %(outcome)s,
+                           %(source)s, %(result_ids)s, %(result_count)s,
+                           %(query_hash)s, %(metadata)s)""",
+                {
+                    "profile": profile,
+                    "operation": operation,
+                    "resource_id": resource_id,
+                    "outcome": outcome,
+                    "source": source,
+                    "result_ids": result_ids,
+                    "result_count": result_count,
+                    "query_hash": query_hash,
+                    "metadata": Jsonb(metadata or {}),
+                },
+                fetch="none",
+            )
+        except Exception:
+            logger.debug("Audit event skipped (table may not exist yet)")
+
+    def query_audit_log(
+        self,
+        profile: str,
+        limit: int = 50,
+        operation: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Query audit log for a profile. Returns empty list if table missing."""
+        try:
+            conditions = ["profile = %(profile)s"]
+            params: dict[str, Any] = {"profile": profile, "limit": limit}
+            if operation:
+                conditions.append("operation = %(operation)s")
+                params["operation"] = operation
+            where = " AND ".join(conditions)
+            rows = self._execute(
+                f"SELECT * FROM audit_log WHERE {where} ORDER BY event_time DESC LIMIT %(limit)s",
+                params,
+                fetch="all",
+            )
+            return rows or []
+        except Exception:
+            logger.debug("Audit query skipped (table may not exist yet)")
+            return []
+
     # ── Search & Retrieval ────────────────────────────────────────────
 
     @with_retry(max_attempts=2, base_delay=0.3)

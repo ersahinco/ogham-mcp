@@ -201,3 +201,19 @@ class DatabaseBackend(Protocol):
         relationship_types: list[str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]: ...
+
+    # ── Hebbian Decay ─────────────────────────────────────────────────
+
+    def apply_hebbian_decay(self, profile: str, batch_size: int = 1000) -> int: ...
+    def count_decay_eligible(self, profile: str) -> int: ...
+
+    # ── Audit ────────────────────────────────────────────────────────
+
+    def emit_audit_event(self, **kwargs: Any) -> None: ...
+
+    def query_audit_log(
+        self,
+        profile: str,
+        limit: int = 50,
+        operation: str | None = None,
+    ) -> list[dict[str, Any]]: ...

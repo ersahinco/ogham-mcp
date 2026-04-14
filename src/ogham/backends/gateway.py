@@ -268,3 +268,17 @@ class GatewayBackend:
             f"/api/v1/memories/{memory_id}/related",
             {"depth": depth, "limit": limit},
         )
+
+    def apply_hebbian_decay(self, profile: str, batch_size: int = 1000) -> int:
+        return 0
+
+    def count_decay_eligible(self, profile: str) -> int:
+        return 0
+
+    def emit_audit_event(self, **kwargs: Any) -> None:
+        pass  # Gateway handles its own audit server-side
+
+    def query_audit_log(
+        self, profile: str, limit: int = 50, operation: str | None = None
+    ) -> list[dict[str, Any]]:
+        return []  # Gateway audit: query via gateway API when available
