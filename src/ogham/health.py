@@ -107,6 +107,24 @@ def check_embedding_provider() -> dict[str, str | bool]:
             }
         return {"status": "ok", "provider": "voyage"}
 
+    elif provider == "gemini":
+        try:
+            from google import genai  # noqa: F401
+        except ImportError:
+            return {
+                "status": "error",
+                "provider": "gemini",
+                "error": "google-genai package not installed",
+                "hint": 'Install with: pip install "ogham-mcp[gemini]"',
+            }
+        if not settings.gemini_api_key:
+            return {
+                "status": "error",
+                "provider": "gemini",
+                "error": "GEMINI_API_KEY not set",
+            }
+        return {"status": "ok", "provider": "gemini"}
+
     elif provider == "onnx":
         try:
             import onnxruntime  # noqa: F401

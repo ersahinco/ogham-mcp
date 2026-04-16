@@ -3,7 +3,8 @@
 Walks users through database configuration, embedding provider selection,
 schema migration, and MCP client configuration.
 
-Supports: Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Codex CLI, Kiro, Antigravity (Google), OpenCode.
+Supports: Claude Desktop, Claude Code, Cursor, VS Code (Copilot),
+Codex CLI, Kiro, Antigravity (Google), OpenCode.
 Platforms: macOS, Linux, Windows.
 Execution modes: uvx (default), Docker (GHCR image).
 """
@@ -205,13 +206,31 @@ def _prompt_embeddings() -> dict:
     console.print("   Ogham turns text into vectors for search. Which provider do you want?\n")
     console.print("   [bold]1)[/bold] ollama   -- free, runs on your machine (must be running)")
     console.print("   [bold]2)[/bold] openai   -- $0.02/1M tokens (API key required)")
-    console.print("   [bold]3)[/bold] voyage   -- $0.02/1M tokens + 200M free (API key required)")
-    console.print("   [bold]4)[/bold] mistral  -- fixed 1024 dims (API key required)\n")
+    console.print("   [bold]3)[/bold] gemini   -- free tier 1500 RPM (API key required)")
+    console.print("   [bold]4)[/bold] voyage   -- $0.02/1M tokens + 200M free (API key required)")
+    console.print("   [bold]5)[/bold] mistral  -- fixed 1024 dims (API key required)\n")
 
-    provider_map = {"1": "ollama", "2": "openai", "3": "voyage", "4": "mistral"}
+    provider_map = {
+        "1": "ollama",
+        "2": "openai",
+        "3": "gemini",
+        "4": "voyage",
+        "5": "mistral",
+    }
     choice = Prompt.ask(
         "   Choose",
-        choices=["1", "2", "3", "4", "ollama", "openai", "voyage", "mistral"],
+        choices=[
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "ollama",
+            "openai",
+            "gemini",
+            "voyage",
+            "mistral",
+        ],
         default="1",
     )
     provider = provider_map.get(choice, choice)
@@ -224,6 +243,12 @@ def _prompt_embeddings() -> dict:
             console.print("   [cyan]Found OPENAI_API_KEY in environment.[/cyan]")
         key = Prompt.ask("   OpenAI API key", default=default_key or None)
         env_vars["OPENAI_API_KEY"] = key
+    elif provider == "gemini":
+        default_key = os.environ.get("GEMINI_API_KEY", "")
+        if default_key:
+            console.print("   [cyan]Found GEMINI_API_KEY in environment.[/cyan]")
+        key = Prompt.ask("   Gemini API key", default=default_key or None)
+        env_vars["GEMINI_API_KEY"] = key
     elif provider == "voyage":
         default_key = os.environ.get("VOYAGE_API_KEY", "")
         if default_key:
@@ -719,6 +744,7 @@ def run_init(
         if api_key:
             key_map = {
                 "openai": "OPENAI_API_KEY",
+                "gemini": "GEMINI_API_KEY",
                 "voyage": "VOYAGE_API_KEY",
                 "mistral": "MISTRAL_API_KEY",
             }

@@ -534,13 +534,30 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.135.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/e6/7adb4c5fa231e82c35b8f5741a9f2d055f520c29af5546fd70d3e8e1cd2e/fastapi-0.135.3.tar.gz", hash = "sha256:bd6d7caf1a2bdd8d676843cdcd2287729572a1ef524fc4d65c17ae002a1be654", size = 396524, upload-time = "2026-04-01T16:23:58.188Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/a4/5caa2de7f917a04ada20018eccf60d6cc6145b0199d55ca3711b0fc08312/fastapi-0.135.3-py3-none-any.whl", hash = "sha256:9b0f590c813acd13d0ab43dd8494138eb58e484bfac405db1f3187cfc5810d98", size = 117734, upload-time = "2026-04-01T16:23:59.328Z" },
+]
+
+[[package]]
 name = "fastmcp"
-version = "3.1.0"
+version = "3.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
     { name = "cyclopts" },
     { name = "exceptiongroup" },
+    { name = "griffelib" },
     { name = "httpx" },
     { name = "jsonref" },
     { name = "jsonschema-path" },
@@ -560,9 +577,9 @@ dependencies = [
     { name = "watchfiles" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/70/862026c4589441f86ad3108f05bfb2f781c6b322ad60a982f40b303b47d7/fastmcp-3.1.0.tar.gz", hash = "sha256:e25264794c734b9977502a51466961eeecff92a0c2f3b49c40c070993628d6d0", size = 17347083, upload-time = "2026-03-03T02:43:11.283Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/13/29544fbc6dfe45ea38046af0067311e0bad7acc7d1f2ad38bb08f2409fe2/fastmcp-3.2.4.tar.gz", hash = "sha256:083ecb75b44a4169e7fc0f632f94b781bdb0ff877c6b35b9877cbb566fd4d4d1", size = 28746127, upload-time = "2026-04-14T01:42:24.174Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/07/516f5b20d88932e5a466c2216b628e5358a71b3a9f522215607c3281de05/fastmcp-3.1.0-py3-none-any.whl", hash = "sha256:b1f73b56fd3b0cb2bd9e2a144fc650d5cc31587ed129d996db7710e464ae8010", size = 633749, upload-time = "2026-03-03T02:43:09.06Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/76/b310d52fa0e30d39bd937eb58ec2c1f1ea1b5f519f0575e9dd9612f01deb/fastmcp-3.2.4-py3-none-any.whl", hash = "sha256:e6c9c429171041455e47ab94bb3f83c4657622a0ec28922f6940053959bd58a9", size = 728599, upload-time = "2026-04-14T01:42:26.85Z" },
 ]
 
 [[package]]
@@ -792,6 +809,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/99/96/a0205167fa0154f4a542fd6925bdc63d039d88dab3588b875078107e6f06/googleapis_common_protos-1.73.0.tar.gz", hash = "sha256:778d07cd4fbeff84c6f7c72102f0daf98fa2bfd3fa8bea426edc545588da0b5a", size = 147323, upload-time = "2026-03-06T21:53:09.727Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/28/23eea8acd65972bbfe295ce3666b28ac510dfcb115fac089d3edb0feb00a/googleapis_common_protos-1.73.0-py3-none-any.whl", hash = "sha256:dfdaaa2e860f242046be561e6d6cb5c5f1541ae02cfbcb034371aadb2942b4e8", size = 297578, upload-time = "2026-03-06T21:52:33.933Z" },
+]
+
+[[package]]
+name = "griffelib"
+version = "2.0.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/82/74f4a3310cdabfbb10da554c3a672847f1ed33c6f61dd472681ce7f1fe67/griffelib-2.0.2.tar.gz", hash = "sha256:3cf20b3bc470e83763ffbf236e0076b1211bac1bc67de13daf494640f2de707e", size = 166461, upload-time = "2026-03-27T11:34:51.091Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/8c/c9138d881c79aa0ea9ed83cbd58d5ca75624378b38cee225dcf5c42cc91f/griffelib-2.0.2-py3-none-any.whl", hash = "sha256:925c857658fb1ba40c0772c37acbc2ab650bd794d9c1b9726922e36ea4117ea1", size = 142357, upload-time = "2026-03-27T11:34:46.275Z" },
 ]
 
 [[package]]
@@ -1530,7 +1556,7 @@ wheels = [
 
 [[package]]
 name = "ogham-mcp"
-version = "0.10.0"
+version = "0.10.3"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
@@ -1549,12 +1575,20 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "fastapi" },
     { name = "flashrank" },
     { name = "google-genai" },
     { name = "mistralai" },
+    { name = "prefab-ui" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
+    { name = "uvicorn" },
     { name = "voyageai" },
+]
+dashboard = [
+    { name = "fastapi" },
+    { name = "prefab-ui" },
+    { name = "uvicorn" },
 ]
 dev = [
     { name = "pytest" },
@@ -1585,7 +1619,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=2.14" },
+    { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.115" },
+    { name = "fastmcp", specifier = ">=3.2.4,<4" },
     { name = "flashrank", marker = "extra == 'all'", specifier = ">=0.2" },
     { name = "flashrank", marker = "extra == 'rerank'", specifier = ">=0.2" },
     { name = "geotext", specifier = ">=0.4" },
@@ -1597,6 +1633,8 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0" },
     { name = "parsedatetime", specifier = ">=2.6" },
     { name = "postgrest", specifier = ">=2.0" },
+    { name = "prefab-ui", marker = "extra == 'all'", specifier = ">=0.18" },
+    { name = "prefab-ui", marker = "extra == 'dashboard'", specifier = ">=0.18" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'all'", specifier = ">=3.1" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.1" },
     { name = "psycopg-pool", marker = "extra == 'all'", specifier = ">=3.1" },
@@ -1610,10 +1648,12 @@ requires-dist = [
     { name = "stop-words", specifier = ">=2024.2.1" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.34" },
+    { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.34" },
     { name = "voyageai", marker = "extra == 'all'", specifier = ">=0.3" },
     { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.3" },
 ]
-provides-extras = ["dev", "postgres", "mistral", "voyage", "gemini", "rerank", "all"]
+provides-extras = ["dev", "postgres", "mistral", "voyage", "gemini", "rerank", "dashboard", "all"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "matplotlib", specifier = ">=3.10.8" }]
@@ -1926,6 +1966,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/40/60/9378ddd6e21b6005b34aeb42dc7a9ed9985c673c97c9b6a1858f9c52ebbd/postgrest-2.28.3.tar.gz", hash = "sha256:56336e9304950a78315ec7d6c8eb307cdb964d0878a7bec6111392ddb6c16a45", size = 13758, upload-time = "2026-03-20T14:38:06.542Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/5e/6eeb1d53d010d80e800204c1eee6b3d5419a6a2b985c364f56f36cf48cca/postgrest-2.28.3-py3-none-any.whl", hash = "sha256:5a44d6c6d509abdbe0f928c86f0dc31ef26bda36e0357129836ec54dfb50b083", size = 21865, upload-time = "2026-03-20T14:38:05.55Z" },
+]
+
+[[package]]
+name = "prefab-ui"
+version = "0.19.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cyclopts" },
+    { name = "pydantic" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d8/79/039ade4eb3bdd23d5850b448f125b93aef3487c30d86adad5ceb9f5929de/prefab_ui-0.19.1.tar.gz", hash = "sha256:344b8c65e8c97d7f9684152c2fd014e8427f7239f633e9a2c3c8fe125a9ce1f4", size = 4082891, upload-time = "2026-04-14T16:26:58.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/be/6721c2e4ac5a974d5cab7a5994111996e7d74c6239fb946e21af1799df59/prefab_ui-0.19.1-py3-none-any.whl", hash = "sha256:9cf937ae2a2eab98d05f47699ac5be66b14f061f9d99d83b71dd77bc2b6d6b3f", size = 1849329, upload-time = "2026-04-14T16:27:00.618Z" },
 ]
 
 [[package]]

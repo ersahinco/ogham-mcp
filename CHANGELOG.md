@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.3] - 2026-04-16 -- Gemini health check fix, Antigravity client
+
+### Fixed
+
+- **Gemini provider health check.** Was falling through as "unknown" and blocking server startup for all Gemini users. Now validates `google-genai` package and `GEMINI_API_KEY`.
+
+### Added
+
+- **Gemini in init wizard.** Option 3 in `ogham init` provider selection with `GEMINI_API_KEY` prompt.
+- **Antigravity (Google) client support.** Init wizard detects `~/.gemini/antigravity/` and writes `mcp_config.json` with `serverUrl` for SSE transport.
+
+### Credits
+
+- **Iain** ([@iainmcinnes-rs](https://github.com/iainmcinnes-rs)) for PR #39 (Antigravity client support)
+
 ## [0.10.2] - 2026-04-16 -- Hook noise fix, visual dashboard, FastMCP 3.2.4
 
 ### Added
