@@ -14,6 +14,7 @@ logging.basicConfig(
 )
 
 import ogham.prompts  # noqa: F401, E402
+import ogham.tools.dashboard  # noqa: F401, E402
 import ogham.tools.memory  # noqa: F401, E402
 import ogham.tools.stats  # noqa: F401, E402
 

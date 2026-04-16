@@ -630,7 +630,7 @@ def test_cache_respects_max_size(tmp_path):
 
     try:
         with patch("ogham.embeddings._generate_uncached") as mock_gen:
-            mock_gen.side_effect = lambda t: [float(hash(t) % 100)] * 1024
+            mock_gen.side_effect = lambda t, usage_out=None: [float(hash(t) % 100)] * 1024
 
             generate_embedding("first")
             generate_embedding("second")
@@ -656,7 +656,7 @@ def test_cache_eviction_counter(tmp_path):
 
     try:
         with patch("ogham.embeddings._generate_uncached") as mock_gen:
-            mock_gen.side_effect = lambda t: [float(hash(t) % 100)] * 1024
+            mock_gen.side_effect = lambda t, usage_out=None: [float(hash(t) % 100)] * 1024
 
             generate_embedding("first")
             generate_embedding("second")

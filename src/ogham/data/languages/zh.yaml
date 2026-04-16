@@ -370,3 +370,26 @@ preference_words:
   - "一般"
   - "总是"
   - "比较好"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - "不再"
+  - "不复"
+  - "以前"
+  - "从前"
+  - "原本"
+  - "原先"
+  - "取代"
+  - "取代为"
+  - "替换"
+  - "替换为"
+  - "废除"
+  - "取消"
+  - "撤销"
+  - "已废弃"
+  - "不推荐"
+  - "停用"
+  - "代替"
+  - "而不是"

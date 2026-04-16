@@ -419,3 +419,19 @@ preference_words:
   - de ghnáth
   - "i gcónaí"
   - "is ansa liom"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+# Note: Irish negation often uses the split construction "ní... níos mó".
+# Markers below are best-effort substring matches.
+negation_markers:
+  - "níos mó"
+  - "a thuilleadh"
+  - tráth
+  - "roimhe seo"
+  - "curtha in áit"
+  - cealaithe
+  - "dulta i léig"
+  - as feidhm
+  - "in ionad"

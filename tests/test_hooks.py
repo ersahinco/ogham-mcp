@@ -120,8 +120,8 @@ def test_post_tool_skips_always_skip_tools():
         mock_store.assert_not_called(), f"{tool_name} should be always-skipped"
 
 
-def test_post_tool_captures_high_value_tools():
-    """Write, Edit, Agent, WebFetch are always captured."""
+def test_post_tool_skips_edit_write_tools():
+    """Edit, Write, Agent, WebFetch are now skipped -- too noisy."""
     from ogham.hooks import post_tool
 
     for tool_name in ["Write", "Edit", "Agent", "WebFetch"]:
@@ -135,7 +135,7 @@ def test_post_tool_captures_high_value_tools():
                 },
                 profile="work",
             )
-        mock_store.assert_called_once(), f"{tool_name} should be captured"
+        mock_store.assert_not_called(), f"{tool_name} should be skipped"
 
 
 def test_post_tool_skips_noise_bash():
@@ -185,8 +185,8 @@ def test_post_tool_tags_include_tool_name():
     with patch("ogham.service.store_memory_enriched") as mock_store:
         post_tool(
             {
-                "tool_name": "Write",
-                "tool_input": {"content": "new file content"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'deploy fix'"},
                 "cwd": "/tmp",
                 "session_id": "s1",
             },
@@ -194,48 +194,45 @@ def test_post_tool_tags_include_tool_name():
         )
 
     tags = mock_store.call_args.kwargs["tags"]
-    assert "tool:Write" in tags
+    assert "tool:Bash" in tags
     assert "type:action" in tags
     assert "session:s1" in tags
 
 
 def test_post_tool_dedup_same_file():
-    """Repeated edits to the same file within 5 min should be collapsed."""
+    """Repeated Bash commits on the same file within 5 min should be collapsed."""
     from ogham.hooks import post_tool
 
     with patch("ogham.service.store_memory_enriched") as mock_store:
-        # First edit -- captured
         post_tool(
             {
-                "tool_name": "Edit",
-                "tool_input": {"file_path": "/tmp/foo.py", "content": "change 1"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'fix deploy'", "file_path": "/tmp/foo.py"},
                 "cwd": "/tmp",
                 "session_id": "s1",
             },
             profile="work",
         )
-        # Second edit to same file -- deduped
         post_tool(
             {
-                "tool_name": "Edit",
-                "tool_input": {"file_path": "/tmp/foo.py", "content": "change 2"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'fix again'", "file_path": "/tmp/foo.py"},
                 "cwd": "/tmp",
                 "session_id": "s1",
             },
             profile="work",
         )
-        # Edit to different file -- captured
         post_tool(
             {
-                "tool_name": "Edit",
-                "tool_input": {"file_path": "/tmp/bar.py", "content": "change 3"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'fix bar'", "file_path": "/tmp/bar.py"},
                 "cwd": "/tmp",
                 "session_id": "s1",
             },
             profile="work",
         )
 
-    assert mock_store.call_count == 2, "Second edit to foo.py should be deduped"
+    assert mock_store.call_count == 2, "Second commit on foo.py should be deduped"
 
 
 def test_post_tool_dedup_different_sessions():
@@ -245,8 +242,8 @@ def test_post_tool_dedup_different_sessions():
     with patch("ogham.service.store_memory_enriched") as mock_store:
         post_tool(
             {
-                "tool_name": "Edit",
-                "tool_input": {"file_path": "/tmp/foo.py", "content": "change 1"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'fix'", "file_path": "/tmp/foo.py"},
                 "cwd": "/tmp",
                 "session_id": "s1",
             },
@@ -254,8 +251,8 @@ def test_post_tool_dedup_different_sessions():
         )
         post_tool(
             {
-                "tool_name": "Edit",
-                "tool_input": {"file_path": "/tmp/foo.py", "content": "change 2"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'fix'", "file_path": "/tmp/foo.py"},
                 "cwd": "/tmp",
                 "session_id": "s2",
             },
@@ -272,10 +269,9 @@ def test_post_tool_content_format():
     with patch("ogham.service.store_memory_enriched") as mock_store:
         post_tool(
             {
-                "tool_name": "Edit",
+                "tool_name": "Bash",
                 "tool_input": {
-                    "file_path": "/Users/dev/myproject/src/main.py",
-                    "content": "new code",
+                    "command": "git push origin main",
                 },
                 "cwd": "/Users/dev/myproject",
                 "session_id": "s1",
@@ -284,11 +280,8 @@ def test_post_tool_content_format():
         )
 
     content = mock_store.call_args.kwargs["content"]
-    # Should have basename, not full path as the main identifier
-    assert "main.py" in content
-    # Should include project name
+    assert "git push" in content
     assert "myproject" in content
-    # Should NOT have the old verbose format
     assert "Directory:" not in content
 
 
@@ -412,8 +405,8 @@ def test_post_tool_masks_secrets_before_storing():
     with patch("ogham.service.store_memory_enriched") as mock_store:
         post_tool(
             {
-                "tool_name": "Write",
-                "tool_input": {"content": "api_key=sk-proj-abc123def456ghi"},
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit -m 'config api_key=sk-proj-abc123def456ghi'"},
                 "cwd": "/tmp",
                 "session_id": "s1",
             },

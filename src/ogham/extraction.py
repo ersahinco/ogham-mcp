@@ -21,6 +21,7 @@ from ogham.data.loader import (
     get_all_error_words,
     get_all_event_words,
     get_all_every_words,
+    get_all_negation_markers,
     get_all_possessive_triggers,
     get_all_preference_words,
     get_all_quantity_units,
@@ -600,6 +601,7 @@ _RELATIONSHIP_WORDS: set[str] = get_all_relationship_words()
 _POSSESSIVE_TRIGGERS: set[str] = get_all_possessive_triggers()
 _QUANTITY_UNITS: set[str] = get_all_quantity_units()
 _PREFERENCE_WORDS: set[str] = get_all_preference_words()
+_NEGATION_MARKERS: set[str] = get_all_negation_markers()
 
 # Pre-compile quantity pattern: number + unit, excluding years
 _QUANTITY_PATTERN = re.compile(
@@ -640,6 +642,29 @@ def compute_importance(content: str, tags: list[str] | None = None) -> float:
         score += 0.1
 
     return min(score, 1.0)
+
+
+# --- Contradiction / supersession detection ---
+
+
+def detect_negation_polarity(content: str) -> int:
+    """Return -1 if content contains a negation / supersession marker, 1 otherwise.
+
+    Used by the contradiction producer. A stored memory containing a negation
+    marker that also has high similarity to an existing memory without one is
+    a candidate for a `contradicts` relationship edge.
+
+    Conservative: returns 1 (positive) by default to keep the false-positive
+    rate low. Matching is case-insensitive substring against multilingual
+    markers loaded from src/ogham/data/languages/<lang>.yaml.
+    """
+    if not content:
+        return 1
+    content_lower = content.lower()
+    for marker in _NEGATION_MARKERS:
+        if marker in content_lower:
+            return -1
+    return 1
 
 
 # --- Entity extraction ---

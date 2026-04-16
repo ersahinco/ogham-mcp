@@ -28,12 +28,25 @@ _ALWAYS_SKIP_TOOLS = frozenset(
         "Glob",
         "Grep",
         "ListDir",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Agent",
+        "Monitor",
         "TaskCreate",
         "TaskUpdate",
         "TaskGet",
         "TaskList",
         "TaskOutput",
+        "TaskStop",
         "AskUserQuestion",
+        "SendMessage",
+        "ScheduleWakeup",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
     }
 )
 
@@ -497,23 +510,24 @@ def post_tool(hook_input: dict, profile: str = "work") -> None:
     summary_lower = summary.lower()
 
     # Skip pure noise commands (ls, pwd, cat, etc.)
+    git_signal_match = False
     if tool_name == "Bash":
         parts = summary_lower.strip().split()
         cmd_word = parts[0] if parts else ""
         if cmd_word in _get_noise_commands():
             return
-        # Git: only capture commits, pushes, merges -- not add, status, diff
-        if cmd_word == "git" and len(parts) > 1:
+        if cmd_word in ("git", "gh") and len(parts) > 1:
             git_sub = parts[1]
             if git_sub in _get_git_noise():
                 return
-            if git_sub not in _get_git_signal():
-                # Unknown git subcommand -- skip unless it has signal keywords
-                if not any(kw in summary_lower for kw in _get_signal_keywords()):
-                    return
+            if git_sub in _get_git_signal():
+                git_signal_match = True
+            elif cmd_word == "gh":
+                git_signal_match = True
+            elif not any(kw in summary_lower for kw in _get_signal_keywords()):
+                return
 
-    # For routine tools (Bash without signal), only capture if content has signal keywords
-    if tool_name in _get_routine_tools():
+    if tool_name in _get_routine_tools() and not git_signal_match:
         if not any(kw in summary_lower for kw in _get_signal_keywords()):
             return
 

@@ -464,3 +464,28 @@ preference_words:
   - "обычно"
   - "как правило"
   - "всегда беру"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - "больше не"
+  - "уже не"
+  - "ранее"
+  - "раньше"
+  - "прежде"
+  - "некогда"
+  - "заменён на"
+  - "заменен на"
+  - "заменена на"
+  - "заменено на"
+  - "отменён"
+  - "отменен"
+  - "отменена"
+  - "отозван"
+  - "отозвана"
+  - "устарел"
+  - "устарела"
+  - "устаревший"
+  - "устаревшая"
+  - "вместо"

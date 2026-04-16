@@ -352,3 +352,25 @@ preference_words:
   - "항상"
   - "제일"
   - "더 좋은"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - "더 이상"
+  - "이전에"
+  - "과거에"
+  - "예전에"
+  - "대체됨"
+  - "대체되었"
+  - "교체됨"
+  - "교체되었"
+  - "폐기됨"
+  - "폐기되었"
+  - "취소됨"
+  - "취소되었"
+  - "철회"
+  - "철회되었"
+  - "무효"
+  - "구식"
+  - "대신에"

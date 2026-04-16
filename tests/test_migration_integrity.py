@@ -53,8 +53,7 @@ def test_later_hybrid_search_migrations_preserve_rrf():
             "the true Reciprocal Rank Fusion formula"
         )
         assert broken_pattern not in content, (
-            f"{name} redefines hybrid_search_memories with the broken raw-score "
-            "fusion pattern"
+            f"{name} redefines hybrid_search_memories with the broken raw-score fusion pattern"
         )
 
 

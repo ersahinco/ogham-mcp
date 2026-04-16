@@ -246,6 +246,24 @@ def get_all_preference_words() -> set[str]:
     return merged
 
 
+def get_negation_markers(lang: str = "en") -> list[str]:
+    """Return negation / supersession markers for a language.
+
+    Used by the contradiction producer: a stored memory containing any of
+    these markers that also has high similarity to an existing memory with
+    no such markers is treated as contradicting the earlier statement.
+    """
+    return _load_language_file(lang).get("negation_markers", [])
+
+
+def get_all_negation_markers() -> set[str]:
+    """Return merged negation markers from all languages."""
+    merged: set[str] = set()
+    for lang in _available_languages():
+        merged.update(get_negation_markers(lang))
+    return merged
+
+
 def get_query_filler(lang: str = "en") -> list[str]:
     """Return query-specific filler words for a language."""
     return _load_language_file(lang).get("query_filler", [])

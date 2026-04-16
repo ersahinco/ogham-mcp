@@ -582,6 +582,29 @@ def audit(
     console.print(table)
 
 
+@app.command()
+def dashboard(
+    port: int = typer.Option(3113, help="Port to serve the dashboard on"),
+    profile: str = typer.Option("default", help="Memory profile to display"),
+    host: str = typer.Option("127.0.0.1", help="Host to bind to"),
+):
+    """Start a visual dashboard in your browser. Requires ogham-mcp[dashboard]."""
+    try:
+        import uvicorn
+
+        from ogham.dashboard_server import create_app
+    except ImportError:
+        console.print(
+            "[red]Dashboard requires extra dependencies.[/red]\n"
+            "Install with: pip install ogham-mcp[dashboard]"
+        )
+        raise typer.Exit(1)
+
+    dashboard_app = create_app(profile=profile)
+    console.print(f"[green]Ogham dashboard → http://{host}:{port}[/green]")
+    uvicorn.run(dashboard_app, host=host, port=port, log_level="warning")
+
+
 def main():
     try:
         app()

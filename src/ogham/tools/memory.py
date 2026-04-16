@@ -78,7 +78,6 @@ ListStr = Annotated[list[str] | None, BeforeValidator(_coerce_list)]
 DictAny = Annotated[dict[str, Any] | None, BeforeValidator(_coerce_dict)]
 
 
-
 MAX_CONTENT_LEN = 100_000
 MAX_LIMIT = 1_000
 
@@ -282,6 +281,179 @@ def store_decision(
             )
 
     return result
+
+
+@mcp.tool
+@log_timing("store_preference")
+def store_preference(
+    preference: str,
+    subject: str | None = None,
+    alternatives: ListStr = None,
+    strength: str = "normal",
+    tags: ListStr = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Store a user preference with structured metadata.
+
+    Formats the preference as prose memory content with `type:preference` tag
+    so later queries like "what does the user prefer for X?" surface it cleanly.
+    Strength lets callers distinguish "always" from "usually from "sometimes".
+
+    Args:
+        preference: What is preferred (e.g. "dark mode", "PostgreSQL over MySQL").
+        subject: Optional subject/context the preference applies to.
+        alternatives: Optional list of alternatives that were rejected.
+        strength: Preference strength -- "strong", "normal" (default), or "weak".
+        tags: Additional tags; type:preference is always added.
+        source: Where this preference was stated.
+    """
+    _require_content(preference)
+
+    if strength not in ("strong", "normal", "weak"):
+        raise ValueError("strength must be one of: strong, normal, weak")
+
+    parts = [f"Preference: {preference}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if alternatives:
+        parts.append(f"Rejected alternatives: {', '.join(alternatives)}")
+    parts.append(f"Strength: {strength}")
+    content = "\n".join(parts)
+
+    pref_tags = list(tags or [])
+    if "type:preference" not in pref_tags:
+        pref_tags.append("type:preference")
+
+    metadata = {
+        "type": "preference",
+        "subject": subject,
+        "alternatives": alternatives or [],
+        "strength": strength,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return store_memory(
+        content=content,
+        source=source,
+        tags=pref_tags,
+        metadata=metadata,
+    )
+
+
+@mcp.tool
+@log_timing("store_fact")
+def store_fact(
+    fact: str,
+    subject: str | None = None,
+    confidence: float = 1.0,
+    source_citation: str | None = None,
+    tags: ListStr = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Store a factual statement with confidence and optional citation.
+
+    Formats the fact as a memory with `type:fact` tag. Confidence lets callers
+    downweight uncertain facts at retrieval time; source_citation preserves
+    provenance (paper, URL, conversation reference) in metadata.
+
+    Args:
+        fact: The factual statement.
+        subject: Optional subject/entity the fact is about.
+        confidence: Confidence score 0.0-1.0 (default 1.0).
+        source_citation: Optional citation string (paper, URL, who-said-it).
+        tags: Additional tags; type:fact is always added.
+        source: Where this fact was recorded (the MCP client / tool).
+    """
+    _require_content(fact)
+
+    if not 0.0 <= confidence <= 1.0:
+        raise ValueError("confidence must be between 0.0 and 1.0")
+
+    parts = [f"Fact: {fact}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if source_citation:
+        parts.append(f"Source: {source_citation}")
+    content = "\n".join(parts)
+
+    fact_tags = list(tags or [])
+    if "type:fact" not in fact_tags:
+        fact_tags.append("type:fact")
+
+    metadata = {
+        "type": "fact",
+        "subject": subject,
+        "confidence": confidence,
+        "source_citation": source_citation,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return store_memory(
+        content=content,
+        source=source,
+        tags=fact_tags,
+        metadata=metadata,
+    )
+
+
+@mcp.tool
+@log_timing("store_event")
+def store_event(
+    event: str,
+    when: str | None = None,
+    participants: ListStr = None,
+    location: str | None = None,
+    tags: ListStr = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Store an event with structured temporal + participant metadata.
+
+    Formats the event as memory content with `type:event` tag, plus structured
+    metadata so temporal queries can match by `when`, social queries by
+    `participants`, and location queries by `location`.
+
+    Args:
+        event: What happened.
+        when: Optional time expression ("2026-04-15 14:00", "yesterday at 3pm",
+              "last Tuesday"). Stored verbatim; the extraction layer will
+              parse and tag dates.
+        participants: Optional list of people or entities involved.
+        location: Optional place name.
+        tags: Additional tags; type:event is always added.
+        source: Where this event was recorded.
+    """
+    _require_content(event)
+
+    parts = [f"Event: {event}"]
+    if when:
+        parts.append(f"When: {when}")
+    if participants:
+        parts.append(f"Participants: {', '.join(participants)}")
+    if location:
+        parts.append(f"Location: {location}")
+    content = "\n".join(parts)
+
+    event_tags = list(tags or [])
+    if "type:event" not in event_tags:
+        event_tags.append("type:event")
+
+    metadata = {
+        "type": "event",
+        "when": when,
+        "participants": participants or [],
+        "location": location,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    dates = extract_dates(content)
+    if dates:
+        metadata["dates"] = dates
+
+    return store_memory(
+        content=content,
+        source=source,
+        tags=event_tags,
+        metadata=metadata,
+    )
 
 
 @mcp.tool

@@ -410,3 +410,33 @@ preference_words:
   - di solito
   - solitamente
   - sempre prendo
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - non più
+  - non ancora
+  - prima
+  - precedentemente
+  - anteriormente
+  - una volta
+  - solevo
+  - solevamo
+  - solevano
+  - sostituito da
+  - sostituita da
+  - rimpiazzato da
+  - rimpiazzata da
+  - annullato
+  - annullata
+  - cancellato
+  - cancellata
+  - deprecato
+  - deprecata
+  - obsoleto
+  - obsoleta
+  - ritirato
+  - ritirata
+  - al posto di
+  - invece di

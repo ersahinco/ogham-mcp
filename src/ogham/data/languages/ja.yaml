@@ -364,3 +364,23 @@ preference_words:
   - "普段"
   - "よりいい"
   - "一番"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - "もう"
+  - "もはや"
+  - "かつて"
+  - "以前"
+  - "以前は"
+  - "旧"
+  - "廃止"
+  - "取り消し"
+  - "撤回"
+  - "置き換え"
+  - "差し替え"
+  - "中止"
+  - "非推奨"
+  - "廃止予定"
+  - "代わりに"

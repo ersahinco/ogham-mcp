@@ -538,3 +538,35 @@ preference_words:
   - usually
   - typically
   - tend to
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list -- false positives would
+# pollute the audit trail with spurious contradicts edges. Markers are matched
+# case-insensitively as substrings.
+negation_markers:
+  - no longer
+  - not anymore
+  - no more
+  - used to
+  - used to be
+  - formerly
+  - previously
+  - deprecated
+  - replaced by
+  - replaced with
+  - switched to
+  - switched from
+  - changed to
+  - changed from
+  - moved to
+  - moved from
+  - superseded by
+  - instead of
+  - not going to
+  - canceled
+  - cancelled
+  - reverted
+  - rolled back
+  - undid
+  - undone

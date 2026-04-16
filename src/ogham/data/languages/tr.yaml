@@ -458,3 +458,23 @@ preference_words:
   - genellikle
   - her zaman
   - "hep alırım"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - artık değil
+  - artık yok
+  - eskiden
+  - önceden
+  - geçmişte
+  - vaktiyle
+  - yerine
+  - iptal edildi
+  - iptal edildi
+  - geri alındı
+  - geri çekildi
+  - kullanımdan kaldırıldı
+  - modası geçmiş
+  - eski
+  - terkedildi

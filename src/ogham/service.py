@@ -17,6 +17,7 @@ from typing import Any
 from ogham.data.loader import get_direction_words
 from ogham.database import auto_link_memory as db_auto_link
 from ogham.database import (
+    create_relationship,
     emit_audit_event,
     hybrid_search_memories,
     record_access,
@@ -27,6 +28,7 @@ from ogham.database import store_memory as db_store
 from ogham.embeddings import EmbeddingUsage, generate_embedding
 from ogham.extraction import (
     compute_importance,
+    detect_negation_polarity,
     extract_dates,
     extract_entities,
     extract_query_anchors,
@@ -36,6 +38,7 @@ from ogham.extraction import (
     is_cross_reference_query,
     is_multi_hop_temporal,
     is_ordering_query,
+    reformulate_query,
     resolve_temporal_query,
 )
 from ogham.pricing import calculate_embedding_cost
@@ -189,6 +192,52 @@ def store_memory_enriched(
             "similarity. Consider using update_memory instead of storing a duplicate."
         )
 
+    # Contradiction detection: if any conflicting memory has opposite polarity
+    # (one says "X", the other says "no longer X" / "replaced by Y"), create a
+    # `contradicts` relationship edge. Retrieval code can later suppress
+    # superseded memories using these edges. Heuristic is intentionally
+    # conservative -- false positives pollute the audit trail.
+    contradictions: list[dict[str, Any]] = []
+    if conflicts:
+        new_polarity = detect_negation_polarity(content)
+        for conflict in conflicts:
+            existing_polarity = detect_negation_polarity(conflict.get("content_preview", ""))
+            if new_polarity != existing_polarity:
+                try:
+                    create_relationship(
+                        source_id=str(result["id"]),
+                        target_id=str(conflict["id"]),
+                        relationship="contradicts",
+                        strength=1.0,
+                        created_by="auto",
+                        metadata={
+                            "similarity": conflict.get("similarity"),
+                            "reason": "opposite_polarity",
+                            "new_polarity": new_polarity,
+                            "existing_polarity": existing_polarity,
+                        },
+                    )
+                    contradictions.append(
+                        {
+                            "id": conflict["id"],
+                            "similarity": conflict.get("similarity"),
+                        }
+                    )
+                except Exception as exc:
+                    logger.debug("Contradicts edge skipped: %s", exc)
+
+    if contradictions:
+        response["contradicts"] = contradictions
+        emit_audit_event(
+            profile=profile,
+            operation="contradict_detected",
+            resource_id=str(result["id"]),
+            source=source,
+            result_ids=[c["id"] for c in contradictions],
+            result_count=len(contradictions),
+            metadata={"contradicted_ids": [c["id"] for c in contradictions]},
+        )
+
     # Auto-link
     if auto_link:
         links_created = db_auto_link(
@@ -324,6 +373,7 @@ def search_memories_enriched(
     embedding_usage: EmbeddingUsage | None = None
 
     if embedding is None:
+
         def _generate_embedding_with_usage_tracking(text: str) -> list[float]:
             nonlocal embedding_usage
             current_usage: EmbeddingUsage = {}
@@ -540,8 +590,25 @@ def _search_memories_raw(
     if embedding is None:
         embedding = embedding_generator(query)
 
-    # Query reformulation disabled — global application regressed MRR (2026-04-10).
+    # Query reformulation is gated per-intent (v0.10.1). Global application
+    # regressed MRR in v0.9.2 because it stripped filler words that temporal
+    # and multi-hop paths depend on. We apply it only on the standard
+    # (info-extraction / simple-lookup) path: specialised-intent branches
+    # return early below before reaching the standard hybrid_search call,
+    # so reformulation only kicks in when none of them fire AND the query
+    # has no temporal intent.
     search_query = query
+    reformulated = None
+    if not (
+        is_ordering_query(query)
+        or is_multi_hop_temporal(query)
+        or is_cross_reference_query(query)
+        or is_broad_summary_query(query)
+        or has_temporal_intent(query)
+    ):
+        reformulated = reformulate_query(query)
+        if reformulated and reformulated != query:
+            search_query = reformulated
 
     # Entity overlap boost: extract entity tags from the query and pass to SQL.
     # Memories sharing entities with the query get up to 1.3x relevance boost.

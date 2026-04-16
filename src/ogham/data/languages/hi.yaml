@@ -348,3 +348,23 @@ preference_words:
   - "आमतौर पर"
   - "हमेशा"
   - "बचना"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - "अब नहीं"
+  - "अब और नहीं"
+  - "पहले"
+  - "पहले था"
+  - "पहले थी"
+  - "पहले थे"
+  - "बदल दिया"
+  - "बदल दी"
+  - "प्रतिस्थापित"
+  - "रद्द किया"
+  - "रद्द"
+  - "पुराना"
+  - "अप्रचलित"
+  - "स्थानांतरित"
+  - "के बजाय"

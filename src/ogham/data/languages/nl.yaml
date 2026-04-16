@@ -364,3 +364,24 @@ preference_words:
   - meestal
   - gewoonlijk
   - altijd neem
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - niet meer
+  - geen meer
+  - vroeger
+  - voorheen
+  - destijds
+  - oorspronkelijk
+  - vervangen door
+  - geannuleerd
+  - afgeschaft
+  - ingetrokken
+  - teruggedraaid
+  - teruggedraait
+  - verouderd
+  - achterhaald
+  - in plaats van
+  - gedeprecieerd

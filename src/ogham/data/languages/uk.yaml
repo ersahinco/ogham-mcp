@@ -394,3 +394,25 @@ preference_words:
   - "зазвичай"
   - "як правило"
   - "завжди беру"
+
+# Negation / supersession markers. Triggers the contradiction producer when
+# present in a stored memory that has high similarity to an existing memory
+# with the opposite polarity. Conservative list.
+negation_markers:
+  - "більше не"
+  - "вже не"
+  - "раніше"
+  - "колись"
+  - "давніше"
+  - "замінено на"
+  - "замінений на"
+  - "замінена на"
+  - "скасовано"
+  - "скасований"
+  - "скасована"
+  - "відмінено"
+  - "відкликано"
+  - "застаріло"
+  - "застарілий"
+  - "застаріла"
+  - "замість"
