@@ -341,6 +341,9 @@ ogham hooks install
 |------|-------------|----------------|
 | `store_memory` | Store a new memory with embedding | `content` (required), `source`, `tags[]`, `auto_link` |
 | `store_decision` | Store an architectural decision | `decision`, `reasoning`, `alternatives[]`, `tags[]` |
+| `store_preference` | Store a user preference with strength metadata | `preference`, `subject`, `alternatives[]`, `strength` |
+| `store_fact` | Store a factual statement with confidence and citation | `fact`, `subject`, `confidence`, `source_citation` |
+| `store_event` | Store an event with temporal and participant metadata | `event`, `when`, `participants[]`, `location` |
 | `update_memory` | Update content of existing memory | `memory_id`, `content`, `tags[]` |
 | `delete_memory` | Delete a memory by ID | `memory_id` |
 | `reinforce_memory` | Increase confidence score | `memory_id` |
@@ -350,7 +353,7 @@ ogham hooks install
 
 | Tool | Description | Key parameters |
 |------|-------------|----------------|
-| `hybrid_search` | Combined semantic + full-text search (RRF) | `query`, `limit`, `tags[]`, `graph_depth`, `profiles[]` |
+| `hybrid_search` | Combined semantic + full-text search (RRF) | `query`, `limit`, `tags[]`, `graph_depth`, `profiles[]`, `extract_facts` |
 | `list_recent` | List recent memories | `limit`, `profile` |
 | `find_related` | Find memories related to a given one | `memory_id`, `limit` |
 
@@ -360,6 +363,7 @@ ogham hooks install
 |------|-------------|----------------|
 | `link_unlinked` | Auto-link memories by embedding similarity | `threshold`, `limit` |
 | `explore_knowledge` | Traverse the knowledge graph | `memory_id`, `depth`, `direction` |
+| `suggest_connections` | Find hidden connections via shared entities | `memory_id`, `min_shared_entities`, `limit` |
 
 ### Profiles
 
@@ -386,7 +390,7 @@ ogham hooks install
 | `cleanup_expired` | Remove expired memories (TTL) | -- |
 | `health_check` | Check database and embedding connectivity | -- |
 | `get_config` | Show runtime configuration with masked secrets | -- |
-| `get_stats` | Memory counts, profiles, activity | -- |
+| `get_stats` | Memory counts, sources, tags, and profile health (orphans, decay, tagging) | -- |
 | `get_cache_stats` | Embedding cache hit rates | -- |
 
 ## Skills
@@ -556,7 +560,15 @@ Ogham's retrieval pipeline combines established information retrieval and cognit
 
 - **ACT-R importance scoring** -- cognitive-architecture-inspired memory weighting based on recency, access frequency, and surprise ([Anderson & Lebiere, 1998](https://act-r.psy.cmu.edu/about/)). Frequently accessed memories stay sharp, rarely accessed ones fade, disputed ones drop in ranking without deletion.
 
-- **Read-time fact extraction** -- query-aware extraction at retrieval time preserves verbatim storage for auditability, contrasting with write-time compression approaches. Verbatim storage ensures the ground truth is always available for re-extraction with different questions later -- a design choice informed by alignment considerations in persistent agent memory ([Anthropic, arXiv:2510.05179](https://arxiv.org/abs/2510.05179)).
+- **Hebbian decay and potentiation** -- memories that are not accessed lose importance over time (5% per 30-day idle period). Memories accessed 10+ times become "potentiated" with a slower decay rate (1% per 30 days), simulating long-term potentiation. Based on Hebb's learning rule ([Hebb, 1949](https://doi.org/10.4324/9781315735368)) and computational models of synaptic plasticity ([Bi & Poo, 2001](https://doi.org/10.1146/annurev.neuro.24.1.139)). Importance serves as a multiplier in the relevance formula -- decayed memories sink in rankings but remain retrievable (floor at 0.05). Original importance is preserved in metadata for recovery. Run as a batch job via `ogham decay` or pg_cron.
+
+- **Spreading activation** -- when a search hits one memory, activation spreads along relationship edges to pull in connected memories that wouldn't have matched on their own. Integrated into cross-reference, ordering, and summary queries. Density-adaptive weighting means sparse graphs lean harder on graph signal, dense graphs rely more on retrieval score. Inspired by Collins & Loftus ([1975](https://doi.org/10.1037/0033-295X.82.6.407)) semantic network theory.
+
+- **Contradiction detection** -- when a new memory has opposite polarity to a high-similarity existing memory, Ogham automatically creates a `contradicts` relationship edge. Polarity detection uses negation markers across 18 languages loaded from YAML word lists. Contradicted memories are not deleted -- the edge records that the newer memory superseded the older one.
+
+- **Read-time fact extraction** -- query-aware extraction at retrieval time preserves verbatim storage for auditability, contrasting with write-time compression approaches. Verbatim storage ensures the ground truth is always available for re-extraction with different questions later -- a design choice informed by alignment considerations in persistent agent memory ([Anthropic, arXiv:2510.05179](https://arxiv.org/abs/2510.05179)). Supports local models via Ollama for full data sovereignty.
+
+- **Append-only audit trails** -- every store, search, delete, and update operation is logged to an `audit_log` table in the same Postgres instance. Designed for GDPR Article 15 subject access requests and cost governance. Fields align with [OTEL GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/). Query via `ogham audit` CLI. No extra infrastructure -- runs in the same database as memories.
 
 ## Documentation
 
