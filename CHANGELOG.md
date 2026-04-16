@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.1] - 2026-04-16 -- Structured wrappers, contradiction detection, contributor PRs
+
+### Added
+
+- **Structured store wrappers** -- `store_preference`, `store_fact`, `store_event` MCP tools with typed metadata (strength, confidence, citations, temporal/participant/location fields). Uses Pydantic `BeforeValidator` coercion for FastMCP client compatibility.
+- **Contradiction producer** -- when a new memory has opposite polarity to a high-similarity existing memory, a `contradicts` relationship edge is created automatically. Polarity detection uses negation markers across 18 languages loaded from YAML word lists. Write-side only -- retrieval-side suppression deferred to a future release.
+- **Query reformulation gating** -- reformulation now fires only on simple-lookup queries. Temporal, ordering, multi-hop, cross-reference, and summary intents skip reformulation to preserve their specialised retrieval paths.
+- **Profile health counters** -- `get_stats` now returns `relationships.orphan_count`, `tagging.untagged_count`, `tagging.distinct_tag_count`, `decay.eligible_count`, and `decay.floor_count`. Migration 022 updates the SQL function for existing installs.
+- **18-language negation markers** -- `negation_markers` section added to all language YAML files (327 markers total). Used by the contradiction producer and polarity detection.
+- **CLI rich renderer hardening** -- `_safe_text()` helper prevents crashes when `store` or `list` receives UUID/datetime types from the backend.
+
+### Changed
+
+- **FastMCP pin** -- rolled back to `>=3.1.0,<3.2` after 3.2.4 introduced a broken internal import (`task_redis_prefix`). Prefab UI work blocked until 3.2.5+ ships with the fix.
+- **Import-time initialization** -- Settings validation, embedding cache construction, and active profile lookup are now lazy. Importing modules no longer requires a configured backend, fixing test collection without `SUPABASE_URL`.
+
+### Fixed
+
+- **CONTRIBUTING.md** -- updated with "Regression-proof rules" for side-effect-free imports. Install command fixed to `uv sync --extra dev --extra postgres`.
+- **ONNX embedder** -- deferred `onnxruntime` and `tokenizers` imports until after model file existence check.
+
+### Credits
+
+- **Cemre** ([@ersahinco](https://github.com/ersahinco)) for PRs #36 (import-time init fix) and #37 (profile health counters + migration 022)
+- **Torres** ([@torres-ai-author](https://github.com/torres-ai-author)) for PR #38 (CLI rich renderer hardening) -- first contribution
+- **Pablo** ([@pablo-brown-rodriguez](https://github.com/pablo-brown-rodriguez)) for PR #34 (FastMCP ListStr coercion pattern)
+
 ## [0.10.0] - 2026-04-14 -- Cognitive memory: audit, decay, spreading activation
 
 ### Added
