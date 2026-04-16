@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.2] - 2026-04-16 -- Hook noise fix, visual dashboard, FastMCP 3.2.4
+
+### Added
+
+- **Visual dashboard.** `ogham dashboard --port 3113` serves a standalone dashboard with KPI metrics, source breakdown, and a searchable memories table with expandable rows. Install via `pip install ogham-mcp[dashboard]`.
+- **MCP dashboard tools.** `show_profile_health`, `show_audit_log`, `show_decay_chart` render inline in Claude Desktop and Goose.
+
+### Changed
+
+- **Hook noise reduction.** The `inscribe` hook now skips Edit, Write, WebFetch, Agent, and other reconnaissance tools. Only Bash commands with signal keywords (git commit/push/merge, errors, deploys) and `gh` CLI commands are captured. Reduces hook-generated memories from ~100/session to ~20-30.
+- **FastMCP bumped to >=3.2.4.** The 3.1.x pin was based on a stale bytecache artifact, not a real regression. Verified on Python 3.13 and 3.14.
+
+### Fixed
+
+- **Git signal bypass.** `git push`, `git commit` etc. were incorrectly filtered by the routine tools keyword check. Now correctly captured by hooks.
+
 ## [0.10.1] - 2026-04-16 -- Structured wrappers, contradiction detection, contributor PRs
 
 ### Added

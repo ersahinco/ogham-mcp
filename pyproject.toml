@@ -1,10 +1,10 @@
 [project]
 name = "ogham-mcp"
-version = "0.10.1"
+version = "0.10.2"
 description = "Shared memory MCP server — persistent, searchable, cross-client"
 requires-python = ">=3.13"
 dependencies = [
-    "fastmcp>=2.14",
+    "fastmcp>=3.2.4,<4",
     "postgrest>=2.0",
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
@@ -28,7 +28,8 @@ mistral = ["mistralai>=1.0"]
 voyage = ["voyageai>=0.3"]
 gemini = ["google-genai>=1.0"]
 rerank = ["flashrank>=0.2"]
-all = ["mistralai>=1.0", "voyageai>=0.3", "google-genai>=1.0", "psycopg-pool>=3.1", "psycopg[binary]>=3.1", "flashrank>=0.2"]
+dashboard = ["prefab-ui>=0.18", "fastapi>=0.115", "uvicorn>=0.34"]
+all = ["mistralai>=1.0", "voyageai>=0.3", "google-genai>=1.0", "psycopg-pool>=3.1", "psycopg[binary]>=3.1", "flashrank>=0.2", "prefab-ui>=0.18", "fastapi>=0.115", "uvicorn>=0.34"]
 
 [project.scripts]
 ogham = "ogham.cli:main"
