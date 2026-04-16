@@ -526,6 +526,31 @@ All migrations are idempotent -- safe to re-run. The upgrade script checks your 
 
 New installs don't need migrations -- the schema files already include everything.
 
+### Upgrading the CLI (uv tool)
+
+uv caches aggressively. A plain `uv tool install ogham-mcp` after a new release may install the old version. Use `--refresh` to force a fresh resolve from PyPI:
+
+```bash
+uv tool uninstall ogham-mcp
+uv cache clean
+uv tool install --refresh "ogham-mcp[gemini,postgres]"
+```
+
+Verify the installed version:
+
+```bash
+ogham config   # Shows version and provider at the top
+```
+
+If you still see the old version, nuke the tool environment directory and retry:
+
+```bash
+rm -rf ~/.local/share/uv/tools/ogham-mcp
+uv tool install --refresh "ogham-mcp[gemini,postgres]"
+```
+
+This is a [known uv caching behaviour](https://docs.astral.sh/uv/concepts/cache/) -- the resolver cache is separate from the package cache and survives `uv cache clean` without `--refresh`.
+
 ## Architecture
 
 Ogham runs as an MCP server over stdio or SSE. Your AI client connects to it like any other MCP tool.
