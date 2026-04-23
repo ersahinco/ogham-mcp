@@ -14,6 +14,12 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Lifecycle: advance_stages is scheduled to run off the hot path when a
+# session starts. Imports hoisted to module top so tests can patch
+# ogham.hooks.{advance_stages,lifecycle_submit} directly.
+from ogham.lifecycle import advance_stages
+from ogham.lifecycle_executor import submit as lifecycle_submit
+
 logger = logging.getLogger(__name__)
 
 # Tools we never capture (prevent infinite loops + pure noise)
@@ -438,13 +444,23 @@ def _mask_secrets(text: str) -> str:
 def session_start(cwd: str, profile: str = "work", limit: int = 8) -> str:
     """Return markdown context for session injection.
 
-    Searches for memories relevant to the current working directory.
+    Searches for memories relevant to the current working directory and
+    schedules a lifecycle advancement sweep on the background executor.
+    The sweep is fire-and-forget -- session starts even if it fails.
     """
     from ogham.database import hybrid_search_memories
     from ogham.embeddings import generate_embedding
 
     project_name = os.path.basename(cwd)
     query = f"project context for {project_name}"
+
+    # Schedule the lifecycle sweep BEFORE the search. It runs on the
+    # background thread pool; the search proceeds on this thread. Any
+    # exception the sweep raises is logged inside lifecycle_submit.
+    try:
+        lifecycle_submit(advance_stages, profile)
+    except Exception:
+        logger.warning("lifecycle: failed to schedule advance_stages sweep", exc_info=True)
 
     try:
         embedding = generate_embedding(query)

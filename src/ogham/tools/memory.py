@@ -33,6 +33,7 @@ from ogham.export_import import export_memories as _export_memories
 from ogham.export_import import import_memories as _import_memories
 from ogham.extraction import extract_dates
 from ogham.health import full_health_check
+from ogham.lifecycle import advance_stages
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,37 @@ def _require_limit(limit: int) -> None:
 _active_profile: str | None = None
 
 
+def _read_active_profile_sentinel() -> str | None:
+    """Read ~/.ogham/active_profile if present.
+
+    The Go CLI ogham-cli writes this file when the user runs `ogham profile
+    switch` or calls the MCP switch_profile tool. By reading it here, both
+    stacks agree on the active profile across process boundaries without
+    having to mutate the user's config.toml. Returns None when the file is
+    absent, unreadable, or empty so callers can fall through to the legacy
+    in-memory / settings path.
+    """
+    import os
+
+    path = os.path.expanduser("~/.ogham/active_profile")
+    try:
+        with open(path, encoding="utf-8") as f:
+            name = f.read().strip()
+    except OSError:
+        return None
+    return name or None
+
+
 def get_active_profile() -> str:
+    # Precedence: OGHAM_PROFILE env > Go-written sentinel file > in-memory
+    # switch_profile call this session > settings.default_profile. Matches
+    # the Go CLI's ActiveProfile() resolution exactly.
+    import os
+
+    if env := os.environ.get("OGHAM_PROFILE", "").strip():
+        return env
+    if sentinel := _read_active_profile_sentinel():
+        return sentinel
     return _active_profile or settings.default_profile
 
 
@@ -1031,3 +1062,26 @@ def _update_compression(
         updates["id"] = memory_id
         sql = f"UPDATE memories SET {', '.join(set_clauses)} WHERE id = %(id)s"
         backend._execute(sql, updates)
+
+
+@mcp.tool
+@log_timing("advance_lifecycle")
+def advance_lifecycle(profile: str | None = None) -> dict[str, Any]:
+    """Run the lifecycle advancement sweep for a profile.
+
+    Ordinarily the sweep fires at session start. Call this to force
+    it (useful after bulk imports or dashboard testing).
+
+    Args:
+        profile: Target profile. Defaults to the active profile.
+
+    Returns:
+        dict with counts: fresh_to_stable, editing_closed.
+    """
+    p = profile or get_active_profile()
+    report = advance_stages(p)
+    return {
+        "profile": p,
+        "fresh_to_stable": report.fresh_to_stable,
+        "editing_closed": report.editing_closed,
+    }

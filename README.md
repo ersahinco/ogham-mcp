@@ -501,26 +501,42 @@ Supabase and Neon both include pgvector out of the box -- no extra setup needed.
 
 For Postgres, set `DATABASE_BACKEND=postgres` and `DATABASE_URL=postgresql://...` in your environment.
 
-### Upgrading from v0.4.x
+### Upgrading an existing Ogham database
 
-If you already have an Ogham database, run the upgrade script to add temporal columns, halfvec compression, and lz4:
+**For v0.10.x → v0.11.0 (memory lifecycle release):**
+see the dedicated guide at [UPGRADING.md](UPGRADING.md). The short version:
+
+```bash
+./sql/upgrade.sh $DATABASE_URL     # applies 025 + 026 + 027 idempotently
+```
+
+Fresh installers do NOT need this -- `sql/schema.sql` already reflects
+the post-v0.11.0 state.
+
+**For older versions (v0.4.x through v0.10.x):**
+the same `upgrade.sh` script walks through every migration in order --
+temporal columns, halfvec compression, sparse embeddings, RRF/BM25
+search, then the v0.11.0 lifecycle additions. Each is idempotent.
 
 ```bash
 # Postgres / Neon (psql required)
 ./sql/upgrade.sh $DATABASE_URL
 
-# Or run migrations individually
-psql $DATABASE_URL -f sql/migrations/012_temporal_columns.sql
-psql $DATABASE_URL -f sql/migrations/013_halfvec_compression.sql
-psql $DATABASE_URL -f sql/migrations/014_lz4_toast_compression.sql
-psql $DATABASE_URL -f sql/migrations/015_temporal_auto_extract.sql
-psql $DATABASE_URL -f sql/migrations/016_sparse_embedding.sql
-psql $DATABASE_URL -f sql/migrations/017_rrf_bm25.sql
-
-# Supabase: paste each migration file into the SQL Editor
+# Supabase: paste migration files into the SQL Editor in order
+#   (025_memory_lifecycle.sql → 026_memory_lifecycle_split.sql → 027_audit_log_backfill.sql
+#   are the v0.11.0 set)
 ```
 
-Migration 016 adds the `sparse_embedding` column for ONNX BGE-M3 sparse vectors. Migration 017 upgrades the search function to true Reciprocal Rank Fusion with length-normalised keyword scoring -- re-run your schema file to apply.
+Selected migration highlights:
+- **016** adds the `sparse_embedding` column for ONNX BGE-M3 sparse vectors.
+- **017** upgrades the search function to true Reciprocal Rank Fusion
+  with length-normalised keyword scoring ([Cormack et al., 2009](https://doi.org/10.1145/1571941.1572114)).
+- **025 / 026** add the memory lifecycle table + triggers (see [UPGRADING.md](UPGRADING.md)).
+- **027** backfills the `audit_log` table for installs that predate it.
+
+**Rollback scripts** live under `sql/migrations/rollback/` with a
+`DANGER_` prefix and require explicit session-variable opt-in before
+they do anything. See `sql/migrations/rollback/README.md`.
 
 All migrations are idempotent -- safe to re-run. The upgrade script checks your pgvector version and skips halfvec if pgvector is below 0.7.0.
 
@@ -586,6 +602,25 @@ Ogham's retrieval pipeline combines established information retrieval and cognit
 - **ACT-R importance scoring** -- cognitive-architecture-inspired memory weighting based on recency, access frequency, and surprise ([Anderson & Lebiere, 1998](https://act-r.psy.cmu.edu/about/)). Frequently accessed memories stay sharp, rarely accessed ones fade, disputed ones drop in ranking without deletion.
 
 - **Hebbian decay and potentiation** -- memories that are not accessed lose importance over time (5% per 30-day idle period). Memories accessed 10+ times become "potentiated" with a slower decay rate (1% per 30 days), simulating long-term potentiation. Based on Hebb's learning rule ([Hebb, 1949](https://doi.org/10.4324/9781315735368)) and computational models of synaptic plasticity ([Bi & Poo, 2001](https://doi.org/10.1146/annurev.neuro.24.1.139)). Importance serves as a multiplier in the relevance formula -- decayed memories sink in rankings but remain retrievable (floor at 0.05). Original importance is preserved in metadata for recovery. Run as a batch job via `ogham decay` or pg_cron.
+
+- **Memory lifecycle (v0.11.0): FRESH / STABLE / EDITING.** Every memory
+  now has an explicit stage tracked in a dedicated `memory_lifecycle`
+  table. New memories land at `fresh`. The session-start hook sweeps
+  aged fresh memories to `stable` when they clear an importance-or-surprise
+  gate and have dwelled long enough. Retrieval opens a 30-minute
+  `editing` window on the returned memories so follow-up
+  `update_memory` calls refine recent thoughts in place; windows
+  auto-close on the next sweep. Memories retrieved together also
+  strengthen their pairwise graph edges (eta=0.01 per co-retrieval,
+  capped at 1.0). The design draws on three lines of prior art:
+  Hebbian co-activation ([Hebb, 1949](https://doi.org/10.4324/9781315735368)),
+  the hybrid exponential-then-power-law forgetting curve characterised
+  by [Wixted (2004)](https://doi.org/10.1146/annurev.psych.55.090902.141555)
+  building on [Ebbinghaus (1885)](https://psychclassics.yorku.ca/Ebbinghaus/memory1.htm),
+  and the memory reconsolidation window from neuroscience
+  ([Nader, Schafe & LeDoux, 2000](https://doi.org/10.1038/35021052))
+  for the editing-on-retrieval mechanic. Stage state lives in its
+  own table so transitions do not touch the HNSW vector index.
 
 - **Spreading activation** -- when a search hits one memory, activation spreads along relationship edges to pull in connected memories that wouldn't have matched on their own. Integrated into cross-reference, ordering, and summary queries. Density-adaptive weighting means sparse graphs lean harder on graph signal, dense graphs rely more on retrieval score. Inspired by Collins & Loftus ([1975](https://doi.org/10.1037/0033-295X.82.6.407)) semantic network theory.
 

@@ -10,6 +10,7 @@ such as `model`, `input_tokens`, and `cache_hit`.
 
 import hashlib
 import logging
+import math
 from typing import TypedDict
 
 from ogham.config import settings
@@ -354,6 +355,8 @@ def _embed_gemini(text: str, usage_out: EmbeddingUsage | None = None) -> list[fl
     )
     embedding = response.embeddings[0].values
     _validate_dim(embedding)
+    if settings.embedding_dim < 3072:
+        embedding = _l2_normalize(embedding)
     _set_usage_out(usage_out, _extract_gemini_usage(response))
     return embedding
 
@@ -363,6 +366,23 @@ def _validate_dim(embedding: list[float]) -> None:
         raise ValueError(
             f"Embedding dimension mismatch: got {len(embedding)}, expected {settings.embedding_dim}"
         )
+
+
+def _l2_normalize(embedding: list[float]) -> list[float]:
+    """Rescale `embedding` to unit length. Zero vectors pass through unchanged
+    (normalizing would divide by zero).
+
+    Gemini only pre-normalizes vectors at the model's native 3072 dim. At
+    512 / 768 / 1536 the magnitude varies, which turns cosine similarity
+    into a magnitude-weighted score. Google's docs explicitly say the
+    caller must normalize sub-3072 outputs client-side:
+    https://ai.google.dev/gemini-api/docs/embeddings
+    """
+    sum_sq = sum(x * x for x in embedding)
+    if sum_sq == 0:
+        return embedding
+    norm = math.sqrt(sum_sq)
+    return [x / norm for x in embedding]
 
 
 def generate_embeddings_batch(
@@ -580,6 +600,8 @@ def _embed_gemini_batch(
         embeddings = [e.values for e in response.embeddings]
         for emb in embeddings:
             _validate_dim(emb)
+        if settings.embedding_dim < 3072:
+            embeddings = [_l2_normalize(emb) for emb in embeddings]
         _set_usage_out(usage_out, _extract_gemini_usage(response))
         return embeddings
 

@@ -3,8 +3,8 @@
 Walks users through database configuration, embedding provider selection,
 schema migration, and MCP client configuration.
 
-Supports: Claude Desktop, Claude Code, Cursor, VS Code (Copilot),
-Codex CLI, Kiro, Antigravity (Google), OpenCode.
+Supports: Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Codex CLI,
+Kiro, Antigravity (Google), OpenCode.
 Platforms: macOS, Linux, Windows.
 Execution modes: uvx (default), Docker (GHCR image).
 """

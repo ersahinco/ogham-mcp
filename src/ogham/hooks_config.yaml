@@ -3,124 +3,218 @@
 # Edit this file to customise what gets captured and masked.
 # Changes take effect on next hook invocation (no restart needed).
 
-# --- Signal filtering ---
-# Only tool activity matching these keywords is captured.
-# Everything else is treated as noise and skipped.
+# --- Signal filtering (verb-only, multilingual) ---
+#
+# Only bash activity matching a VERB/EVENT keyword is captured. The
+# previous noun-heavy list (config, docker, supabase, neon, auth, token,
+# schema, etc.) caused daily infrastructure work to be captured as
+# "signal" when it was really just routine. These lists now reflect
+# events that HAPPENED (past-tense verbs + explicit annotation markers)
+# rather than topics that were MENTIONED.
+#
+# Multilingual coverage mirrors the 18-lang extraction YAMLs in
+# ogham-cli/internal/native/extraction/languages/*.yaml -- keep these
+# lists in sync when adding languages. Long-term: have hooks read those
+# YAMLs directly instead of duplicating here.
 
 signals:
   errors:
+    # EN
     - error
-    - fail
-    - fix
+    - failed
+    - failure
     - bug
+    - broken
     - broke
     - crash
+    - crashed
     - exception
     - traceback
     - stacktrace
     - segfault
     - panic
+    - regression
+    # DE
+    - fehler
+    - fehlgeschlagen
+    - ausnahme
+    - absturz
+    - defekt
+    - abgebrochen
+    - zeitüberschreitung
+    # FR
+    - erreur
+    - échoué
+    - échec
+    - bogue
+    - cassé
+    - plantage
+    # ES
+    - fallido
+    - fallo
+    - roto
+    - caída
+    # IT
+    - errore
+    - eccezione
+    - fallito
+    - guasto
+    - rotto
+    # PT
+    - erro
+    - exceção
+    - falhou
+    - falha
+    - quebrado
+    # NL
+    - fout
+    - mislukt
+    - storing
+    - kapot
 
   decisions:
+    # EN -- past-tense action verbs only
     - decided
     - chose
-    - switch
-    - migrate
-    - replace
-    - refactor
-    - deprecated
+    - picked
+    - opted
+    - selected
+    - switched
+    - migrated
+    - replaced
     - removed
     - added
     - changed
+    - adopted
+    - shipped
+    - merged
+    - deployed
+    - rolled back
+    - reverted
+    - reverted
+    - deprecated
+    - rejected
+    - approved
+    - committed
+    # DE
+    - entschieden
+    - gewählt
+    - gewechselt
+    - migriert
+    - ausgewählt
+    - ersetzt
+    - umgestiegen
+    - beschlossen
+    - ausgetauscht
+    - veröffentlicht
+    - zusammengeführt
+    # FR
+    - décidé
+    - choisi
+    - migré
+    - sélectionné
+    - remplacé
+    - adopté
+    - opté
+    - basculé
+    - déployé
+    - fusionné
+    # ES
+    - decidido
+    - elegido
+    - migrado
+    - seleccionado
+    - reemplazado
+    - adoptado
+    - optado
+    - cambiado
+    - desplegado
+    - fusionado
+    # IT
+    - deciso
+    - scelto
+    - migrato
+    - selezionato
+    - sostituito
+    - adottato
+    - optato
+    - cambiato
+    - schierato
+    - fuso
+    # PT
+    - decidido
+    - escolhido
+    - migrado
+    - selecionado
+    - substituído
+    - adotado
+    - optado
+    - mudado
+    - implantado
+    # NL
+    - besloten
+    - gekozen
+    - gemigreerd
+    - geselecteerd
+    - vervangen
+    - overgestapt
+    - gewijzigd
+    - uitgerold
+    - samengevoegd
 
-  infrastructure:
-    - config
-    - deploy
-    - release
-    - install
-    - upgrade
-    - rollback
-    - permission
-    - denied
-    - timeout
-    - refused
-    - certificate
+  architecture:
+    # EN
+    - refactored
+    - restructured
+    - decoupled
+    - rewrote
+    - redesigned
+    # DE
+    - refaktorisierung
+    - umstrukturierung
+    - entkoppelt
+    - neu geschrieben
+    # FR
+    - refactorisation
+    - restructuration
+    - découplé
+    - réécrit
+    # ES
+    - refactorización
+    - reestructuración
+    - desacoplado
+    - reescrito
+    # IT
+    - refactoring
+    - ristrutturazione
+    - disaccoppiato
+    # PT
+    - refatoração
+    - reestruturação
+    - desacoplado
+    # NL
+    - refactoring
+    - herstructurering
+    - ontkoppeld
 
-  devops:
-    - docker
-    - railway
-    - neon
-    - supabase
-    - vercel
-    - cloudflare
-    - terraform
-    - kubernetes
-    - k8s
-    - helm
-    # Azure
-    - az
-    - bicep
-    - arm template
-    # AWS
-    - aws
-    - cdk
-    - cloudformation
-    - lambda
-    - s3
-    - ec2
-    - ecs
-    - eks
-
-  testing:
-    - test
-    - pytest
-    - jest
-    - vitest
-    - mocha
-    - passed
-    - failed
-    - coverage
-
-  security:
-    - secret
-    - credential
-    - auth
-    - token
-    - vulnerability
-    - cve
-    - cors
-    - csrf
-
-  database:
-    - migration
-    - schema
-    - index
-    - vacuum
-    - replication
-    - seed
-    - rollback
-
-  workarounds:
+  # Explicit annotations -- these mark a real intent even when noun-shaped.
+  # Small list, kept because the user wrote them deliberately.
+  annotations:
     - todo
+    - fixme
     - hack
     - workaround
     - gotcha
     - caveat
-    - warning
-    - fixme
     - xxx
 
-  packages:
-    - pip install
-    - npm install
-    - yarn add
-    - pnpm add
-    - uv add
-    - go get
-    - cargo add
-    - dotnet add
-    - nuget install
-    - brew install
+  # DROPPED (2026-04-22): the `infrastructure`, `devops`, `testing`,
+  # `security`, `database`, and `packages` categories. Those lists were
+  # domain nouns (config, docker, supabase, auth, token, schema, pip
+  # install, etc.) that fire on every daily command in infra-heavy
+  # work. If you fix or break a "supabase" thing, the error/decision
+  # verbs above catch it. If you just query supabase, nothing captures
+  # — that's the intent.
 
 # --- Noise filtering ---
 # These are always skipped, never captured.

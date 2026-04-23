@@ -1,6 +1,9 @@
 -- Ogham MCP Schema (Supabase Docker / self-hosted Supabase)
 -- Use this instead of schema.sql when running Supabase Docker (self-hosted).
 -- Uses public schema for pgvector (no extensions schema) + RLS with anon role.
+--
+-- memory_lifecycle + triggers + decay params incorporate migrations 025 + 026.
+-- Fresh installs land at post-026 state; upgraders from v0.10.x run ./sql/upgrade.sh.
 
 -- Enable pgvector extension
 create extension if not exists vector with schema public;
@@ -75,6 +78,8 @@ create index if not exists idx_memories_recurrence on memories using gin (recurr
 create table if not exists profile_settings (
     profile text primary key,
     ttl_days integer check (ttl_days is null or ttl_days >= 1),
+    decay_lambda double precision not null default 0.1,
+    decay_beta double precision not null default 0.4,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -88,6 +93,70 @@ create policy "Deny anon access" on profile_settings
 
 -- No authenticated policy: service_role bypasses RLS.
 -- Add scoped policies here when building multi-user support.
+
+-- ── Memory lifecycle (FRESH / STABLE / EDITING) ───────────────────────
+-- Lifecycle state lives in its own table so writes don't trigger HNSW
+-- tuple rewrites on memories.embedding. See migrations 025 + 026 for the
+-- history; fresh installs land directly at the post-026 shape.
+create table if not exists memory_lifecycle (
+    memory_id uuid primary key references memories(id) on delete cascade,
+    profile text not null,
+    stage text not null default 'fresh',
+    stage_entered_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint memory_lifecycle_stage_valid check (stage in ('fresh', 'stable', 'editing'))
+);
+
+-- Partial index for sweeps (advance_stages, close_editing_windows).
+create index if not exists memory_lifecycle_transitioning_idx
+    on memory_lifecycle (profile, stage_entered_at)
+    where stage in ('fresh', 'editing');
+
+-- Full index for lifecycle_pipeline_counts which groups across all stages.
+create index if not exists memory_lifecycle_profile_stage_idx
+    on memory_lifecycle (profile, stage);
+
+-- RLS for memory_lifecycle: mirror the "Deny anon access" pattern.
+alter table memory_lifecycle enable row level security;
+alter table memory_lifecycle force row level security;
+
+create policy "Deny anon access" on memory_lifecycle
+    for all to anon using (false) with check (false);
+
+-- Trigger: auto-init a lifecycle row when a new memory is inserted.
+create or replace function init_memory_lifecycle() returns trigger as $$
+begin
+    insert into memory_lifecycle (memory_id, profile, stage, stage_entered_at, updated_at)
+    values (new.id, new.profile, 'fresh', new.created_at, new.created_at)
+    on conflict (memory_id) do nothing;
+    return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists memories_init_lifecycle on memories;
+create trigger memories_init_lifecycle
+    after insert on memories
+    for each row
+    execute function init_memory_lifecycle();
+
+-- Trigger: keep memory_lifecycle.profile in sync when a memory is moved
+-- between profiles (rare but possible).
+create or replace function sync_memory_lifecycle_profile() returns trigger as $$
+begin
+    if new.profile is distinct from old.profile then
+        update memory_lifecycle
+           set profile = new.profile, updated_at = now()
+         where memory_id = new.id;
+    end if;
+    return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists memories_sync_lifecycle_profile on memories;
+create trigger memories_sync_lifecycle_profile
+    after update of profile on memories
+    for each row
+    execute function sync_memory_lifecycle_profile();
 
 -- Relationship type enum
 CREATE TYPE relationship_type AS ENUM (

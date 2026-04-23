@@ -4,6 +4,96 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.0] - 2026-04-23 -- Memory lifecycle (FRESH / STABLE / EDITING)
+
+### Added
+
+- **Memory lifecycle state machine.** Every memory now has an explicit stage
+  (FRESH / STABLE / EDITING). New memories land at `fresh`. The session-start
+  hook promotes aged fresh memories to `stable` when they clear an
+  importance-or-surprise gate. Retrieving a memory opens a 30-minute
+  `editing` window so a follow-up `update_memory` call refines in place;
+  windows auto-close on the next sweep. No new API surface the agent has to
+  learn -- transitions are automatic.
+- **Hebbian edge strengthening on co-retrieval.** Memories retrieved
+  together build stronger graph edges over time (eta=0.01 per
+  co-retrieval, capped at 1.0). Pairs are canonically ordered to prevent
+  deadlocks and mirror-image double edges under concurrent writes.
+- **`advance_lifecycle` MCP tool** for manually triggering the stage sweep
+  (useful after bulk imports or from the dashboard).
+- **Upgrade guide at [UPGRADING.md](UPGRADING.md).** Covers uv tool / uvx /
+  pip / git-checkout / Docker install variants, a Supabase paste-SQL
+  variant, verification query, and common-issue troubleshooting.
+- **Three new SQL migrations** in `sql/migrations/`:
+  - `025_memory_lifecycle.sql` — lifecycle columns + decay tuning params
+  - `026_memory_lifecycle_split.sql` — moves lifecycle state to its own
+    table so transitions don't touch the HNSW vector index. Adds triggers
+    that auto-maintain lifecycle rows on memory insert + profile update.
+  - `027_audit_log_backfill.sql` — creates `audit_log` for installs that
+    predate its introduction (skips RLS on plain Postgres; only applies
+    on Supabase where the `anon` role exists).
+
+### Changed
+
+- **Search-triggered side-effects are now fire-and-forget** on a background
+  thread pool. `hybrid_search` returns as soon as the results are
+  assembled; the editing-window open and Hebbian strengthening run off
+  the hot path. Failures are logged, never raised to the caller.
+- **Fresh-install schemas include the lifecycle design directly.** New
+  installers get the `memory_lifecycle` table + triggers from
+  `sql/schema.sql` and friends. Existing installs apply migrations via
+  `./sql/upgrade.sh`.
+
+### Safety
+
+- **Rollback SQL files now refuse to run by accident.** Piping a rollback
+  into psql blindly fails with a clear message. Rollbacks live under
+  `sql/migrations/rollback/` with a `DANGER_` filename prefix and require
+  an explicit session-variable opt-in
+  (`SET ogham.confirm_rollback = 'I-KNOW-WHAT-I-AM-DOING'`) before they do
+  anything. See `sql/migrations/rollback/README.md`.
+
+### Upgrade notes
+
+**Existing users on v0.10.x:**
+
+```bash
+./sql/upgrade.sh "$DATABASE_URL"     # apply 025 + 026 + 027 idempotently
+# then upgrade the package normally:
+#   uv tool upgrade --refresh ogham-mcp
+# or: pip install -U ogham-mcp
+# or: uvx --refresh ogham-mcp
+```
+
+**Fresh installers:** nothing extra. `sql/schema.sql` now reflects the
+post-v0.11.0 state directly; `upgrade.sh` is only needed for existing
+deployments.
+
+See [UPGRADING.md](UPGRADING.md) for the detailed walkthrough.
+
+---
+
+## [0.10.4] - 2026-04-22 -- Hook signal filter: verb-only, multilingual
+
+### Fixed
+
+- **Hook noise capture.** `ogham hooks inscribe` was storing every shell
+  command that mentioned a common infrastructure noun (`config`, `docker`,
+  `supabase`, `neon`, `railway`, `auth`, `token`, `schema`, `migration`,
+  etc.) — on an infrastructure-heavy day this captured 100+ routine
+  commands as "memories". The fix was a verb-only, multilingual signal
+  list: the hook now only fires when the command or output contains an
+  explicit decision / error / resolution verb.
+
+### Changed
+
+- `hooks_config.yaml` rewritten with verb-first signals across seven
+  languages (English, German, French, Spanish, Italian, Portuguese,
+  Dutch) and four categories (errors, decisions, architecture,
+  annotations).
+
+---
+
 ## [0.10.3] - 2026-04-16 -- Gemini health check fix, Antigravity client
 
 ### Fixed

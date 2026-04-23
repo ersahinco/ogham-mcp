@@ -1,6 +1,9 @@
 -- Ogham MCP Schema (Supabase Docker / self-hosted Supabase)
 -- Use this instead of schema.sql when running Supabase Docker (self-hosted).
 -- Uses public schema for pgvector (no extensions schema) + RLS with anon role.
+--
+-- memory_lifecycle + triggers + decay params incorporate migrations 025 + 026.
+-- Fresh installs land at post-026 state; upgraders from v0.10.x run ./sql/upgrade.sh.
 
 -- Enable pgvector extension
 create extension if not exists vector with schema public;
@@ -45,9 +48,11 @@ create policy "Deny anon access" on memories
 -- No authenticated policy: service_role bypasses RLS.
 -- Add scoped policies here when building multi-user support.
 
--- HNSW index for fast cosine similarity search
+-- HNSW index for fast cosine similarity search. Uses vector_cosine_ops
+-- (dim-agnostic, works at any EMBEDDING_DIM). See migration 021 for
+-- the opt-in halfvec variant if memory-at-scale matters.
 create index if not exists memories_embedding_idx
-    on memories using hnsw ((embedding::halfvec(512)) halfvec_cosine_ops)
+    on memories using hnsw (embedding vector_cosine_ops)
     with (m = 16, ef_construction = 64);
 
 -- GIN indexes for filtering
@@ -75,6 +80,8 @@ create index if not exists idx_memories_recurrence on memories using gin (recurr
 create table if not exists profile_settings (
     profile text primary key,
     ttl_days integer check (ttl_days is null or ttl_days >= 1),
+    decay_lambda double precision not null default 0.1,
+    decay_beta double precision not null default 0.4,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -88,6 +95,70 @@ create policy "Deny anon access" on profile_settings
 
 -- No authenticated policy: service_role bypasses RLS.
 -- Add scoped policies here when building multi-user support.
+
+-- ── Memory lifecycle (FRESH / STABLE / EDITING) ───────────────────────
+-- Lifecycle state lives in its own table so writes don't trigger HNSW
+-- tuple rewrites on memories.embedding. See migrations 025 + 026 for the
+-- history; fresh installs land directly at the post-026 shape.
+create table if not exists memory_lifecycle (
+    memory_id uuid primary key references memories(id) on delete cascade,
+    profile text not null,
+    stage text not null default 'fresh',
+    stage_entered_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint memory_lifecycle_stage_valid check (stage in ('fresh', 'stable', 'editing'))
+);
+
+-- Partial index for sweeps (advance_stages, close_editing_windows).
+create index if not exists memory_lifecycle_transitioning_idx
+    on memory_lifecycle (profile, stage_entered_at)
+    where stage in ('fresh', 'editing');
+
+-- Full index for lifecycle_pipeline_counts which groups across all stages.
+create index if not exists memory_lifecycle_profile_stage_idx
+    on memory_lifecycle (profile, stage);
+
+-- RLS for memory_lifecycle: mirror the "Deny anon access" pattern.
+alter table memory_lifecycle enable row level security;
+alter table memory_lifecycle force row level security;
+
+create policy "Deny anon access" on memory_lifecycle
+    for all to anon using (false) with check (false);
+
+-- Trigger: auto-init a lifecycle row when a new memory is inserted.
+create or replace function init_memory_lifecycle() returns trigger as $$
+begin
+    insert into memory_lifecycle (memory_id, profile, stage, stage_entered_at, updated_at)
+    values (new.id, new.profile, 'fresh', new.created_at, new.created_at)
+    on conflict (memory_id) do nothing;
+    return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists memories_init_lifecycle on memories;
+create trigger memories_init_lifecycle
+    after insert on memories
+    for each row
+    execute function init_memory_lifecycle();
+
+-- Trigger: keep memory_lifecycle.profile in sync when a memory is moved
+-- between profiles (rare but possible).
+create or replace function sync_memory_lifecycle_profile() returns trigger as $$
+begin
+    if new.profile is distinct from old.profile then
+        update memory_lifecycle
+           set profile = new.profile, updated_at = now()
+         where memory_id = new.id;
+    end if;
+    return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists memories_sync_lifecycle_profile on memories;
+create trigger memories_sync_lifecycle_profile
+    after update of profile on memories
+    for each row
+    execute function sync_memory_lifecycle_profile();
 
 -- Relationship type enum
 CREATE TYPE relationship_type AS ENUM (
@@ -145,13 +216,13 @@ SECURITY INVOKER
 SET search_path = public, extensions
 AS $$
     WITH candidates AS (
-        SELECT m.id, (1 - (m.embedding::halfvec(512) <=> new_embedding::halfvec(512)))::float AS similarity
+        SELECT m.id, (1 - (m.embedding <=> new_embedding))::float AS similarity
         FROM memories m
         WHERE m.id != new_memory_id
           AND m.profile = filter_profile
           AND (m.expires_at IS NULL OR m.expires_at > now())
-          AND 1 - (m.embedding::halfvec(512) <=> new_embedding::halfvec(512)) > link_threshold
-        ORDER BY m.embedding::halfvec(512) <=> new_embedding::halfvec(512)
+          AND 1 - (m.embedding <=> new_embedding) > link_threshold
+        ORDER BY m.embedding <=> new_embedding
         LIMIT max_links
     ),
     inserted AS (
@@ -302,13 +373,13 @@ begin
         m.source,
         m.profile,
         m.tags,
-        (1 - (m.embedding::halfvec(512) <=> query_embedding::halfvec(512)))::float as similarity,
+        (1 - (m.embedding <=> query_embedding))::float as similarity,
         -- Relevance = similarity * softplus(ACT-R) * confidence * graph_boost
         -- ACT-R: B(M) = ln(n+1) - 0.5 * ln(ageDays / (n+1))
         -- softplus: ln(1 + exp(B)) keeps score positive
         -- graph_boost: (1 + sum(relationship_strength) * 0.2)
         (
-            (1 - (m.embedding::halfvec(512) <=> query_embedding::halfvec(512))) *
+            (1 - (m.embedding <=> query_embedding)) *
             ln(1.0 + exp(
                 ln(m.access_count + 1.0) -
                 0.5 * ln(
@@ -333,7 +404,7 @@ begin
         where r.target_id = m.id or r.source_id = m.id
     ) g on true
     where
-        1 - (m.embedding::halfvec(512) <=> query_embedding::halfvec(512)) > match_threshold
+        1 - (m.embedding <=> query_embedding) > match_threshold
         and (filter_tags is null or m.tags && filter_tags)
         and (filter_source is null or m.source = filter_source)
         and m.profile = filter_profile
@@ -379,15 +450,15 @@ as $$
 with semantic as (
     select
         m.id,
-        row_number() over (order by m.embedding::halfvec(512) <=> query_embedding::halfvec(512)) as rank_ix,
-        (1 - (m.embedding::halfvec(512) <=> query_embedding::halfvec(512)))::float as similarity
+        row_number() over (order by m.embedding <=> query_embedding) as rank_ix,
+        (1 - (m.embedding <=> query_embedding))::float as similarity
     from memories m
     where (filter_profiles is not null and m.profile = any(filter_profiles)
            or filter_profiles is null and m.profile = filter_profile)
       and (filter_tags is null or m.tags && filter_tags)
       and (filter_source is null or m.source = filter_source)
       and (m.expires_at is null or m.expires_at > now())
-    order by m.embedding::halfvec(512) <=> query_embedding::halfvec(512)
+    order by m.embedding <=> query_embedding
     limit match_count * 2
 ),
 keyword as (
@@ -569,7 +640,7 @@ begin
             select 1 from memories m
             where m.profile = filter_profile
               and (m.expires_at is null or m.expires_at > now())
-              and 1 - (m.embedding::halfvec(512) <=> query_embeddings[i]::halfvec(512)) > match_threshold
+              and 1 - (m.embedding <=> query_embeddings[i]) > match_threshold
             limit 1
         ) into found;
         results := array_append(results, found);

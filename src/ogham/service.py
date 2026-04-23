@@ -41,6 +41,9 @@ from ogham.extraction import (
     reformulate_query,
     resolve_temporal_query,
 )
+from ogham.graph import strengthen_edges
+from ogham.lifecycle import open_editing_window
+from ogham.lifecycle_executor import submit as _lifecycle_submit
 from ogham.pricing import calculate_embedding_cost
 
 logger = logging.getLogger(__name__)
@@ -413,6 +416,15 @@ def search_memories_enriched(
         query_hash=hashlib.sha256(query.encode()).hexdigest()[:16],
         **_audit_usage_fields(embedding_usage),
     )
+
+    # Lifecycle side-effects run off the hot path. Failures are logged
+    # inside the executor; search returns immediately.
+    # - open_editing_window: STABLE -> EDITING promotion (FRESH filtered internally)
+    # - strengthen_edges: Hebbian co-retrieval strengthens pairwise edges
+    if results:
+        ids = [str(r["id"]) for r in results]
+        _lifecycle_submit(open_editing_window, ids)
+        _lifecycle_submit(strengthen_edges, ids)
 
     if extract_facts and results:
         results = _read_time_extract(query, results)

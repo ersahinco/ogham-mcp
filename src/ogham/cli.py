@@ -585,13 +585,17 @@ def audit(
 @app.command()
 def dashboard(
     port: int = typer.Option(3113, help="Port to serve the dashboard on"),
-    profile: str = typer.Option("default", help="Memory profile to display"),
+    profile: str | None = typer.Option(
+        None,
+        help="Memory profile to display (defaults to DEFAULT_PROFILE / settings.default_profile).",
+    ),
     host: str = typer.Option("127.0.0.1", help="Host to bind to"),
 ):
     """Start a visual dashboard in your browser. Requires ogham-mcp[dashboard]."""
     try:
         import uvicorn
 
+        from ogham.config import settings
         from ogham.dashboard_server import create_app
     except ImportError:
         console.print(
@@ -600,8 +604,16 @@ def dashboard(
         )
         raise typer.Exit(1)
 
+    # Fall back to the configured default profile when --profile is not
+    # passed. A hardcoded "default" default would override DEFAULT_PROFILE
+    # from env / config.env, which is surprising and broke the Go CLI's
+    # profile handoff -- see
+    # docs/plans/2026-04-16-go-cli-enterprise.md for the diagnosis.
+    if not profile:
+        profile = settings.default_profile
+
     dashboard_app = create_app(profile=profile)
-    console.print(f"[green]Ogham dashboard → http://{host}:{port}[/green]")
+    console.print(f"[green]Ogham dashboard ({profile}) → http://{host}:{port}[/green]")
     uvicorn.run(dashboard_app, host=host, port=port, log_level="warning")
 
 
