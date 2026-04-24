@@ -253,45 +253,67 @@ class PostgresBackend:
         return row
 
     def store_memories_batch(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Insert multiple memories. Each row comes pre-formatted from export_import.py."""
+        """Insert multiple memories in a single multi-row VALUES INSERT.
+
+        Every row in a batch must carry the same column set -- the benchmark
+        and export_import.py paths already satisfy this. Varying shapes would
+        force us back to per-row execute, so we validate upfront.
+
+        Prior implementation looped ``cur.execute()`` per row. At 100-row
+        harness batches * hundreds of benchmark questions that turned a
+        clean LME ingest into an hours-long run. Now one execute per batch,
+        RETURNING order matches input order (PostgreSQL preserves VALUES
+        order for RETURNING).
+        """
         if not rows:
             return []
+
+        # Freeze the column set from the first row; require consistency.
+        cols = list(rows[0].keys())
+        col_set = set(cols)
+        for col in cols:
+            if col not in _ALLOWED_MEMORY_COLUMNS:
+                raise ValueError(f"Unknown column: {col!r}")
+        for i, row in enumerate(rows):
+            if set(row.keys()) != col_set:
+                raise ValueError(
+                    f"store_memories_batch: row {i} has columns {set(row.keys())}, "
+                    f"expected {col_set}. All rows in a batch must share columns."
+                )
+
+        # Build ONE multi-row VALUES clause + a flat params dict keyed by
+        # (col, row_index) so psycopg can bind them by name.
+        values_clauses: list[str] = []
+        params: dict[str, Any] = {}
+        for i, row in enumerate(rows):
+            placeholders = []
+            for col in cols:
+                param_name = f"{col}_{i}"
+                val = row[col]
+                if col == "embedding":
+                    placeholders.append(f"%({param_name})s::vector")
+                    params[param_name] = val if isinstance(val, str) else _embedding_literal(val)
+                elif col == "metadata":
+                    placeholders.append(f"%({param_name})s")
+                    params[param_name] = Jsonb(val) if not isinstance(val, Jsonb) else val
+                else:
+                    placeholders.append(f"%({param_name})s")
+                    params[param_name] = val
+            values_clauses.append(f"({', '.join(placeholders)})")
+
+        sql = (
+            f"INSERT INTO memories ({', '.join(cols)}) "
+            f"VALUES {', '.join(values_clauses)} RETURNING *"
+        )
+
         results: list[dict[str, Any]] = []
         with self._checkout() as conn:
             with conn.cursor() as cur:
-                for row in rows:
-                    cols = list(row.keys())
-                    for col in cols:
-                        if col not in _ALLOWED_MEMORY_COLUMNS:
-                            raise ValueError(f"Unknown column: {col!r}")
-                    placeholders = []
-                    params: dict[str, Any] = {}
-                    for col in cols:
-                        param_name = col
-                        val = row[col]
-                        if col == "embedding":
-                            placeholders.append(f"%({param_name})s::vector")
-                            # Already a string from export_import.py
-                            params[param_name] = (
-                                val if isinstance(val, str) else _embedding_literal(val)
-                            )
-                        elif col == "metadata":
-                            placeholders.append(f"%({param_name})s")
-                            params[param_name] = Jsonb(val) if not isinstance(val, Jsonb) else val
-                        else:
-                            placeholders.append(f"%({param_name})s")
-                            params[param_name] = val
-
-                    sql = (
-                        f"INSERT INTO memories ({', '.join(cols)})"
-                        f" VALUES ({', '.join(placeholders)}) RETURNING *"
-                    )
-                    cur.execute(sql, params)
-                    result = cur.fetchone()
-                    if result:
-                        result.pop("embedding", None)
-                        result.pop("fts", None)
-                        results.append(result)
+                cur.execute(sql, params)
+                for result in cur.fetchall():
+                    result.pop("embedding", None)
+                    result.pop("fts", None)
+                    results.append(result)
         return results
 
     def update_memory(

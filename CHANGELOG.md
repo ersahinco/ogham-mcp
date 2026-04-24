@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.1] - 2026-04-24 -- Security + performance patch
+
+### Security
+
+- **Migration 029 -- `SET search_path` on trigger functions.** The two trigger
+  functions shipped in migration 026 (`init_memory_lifecycle`,
+  `sync_memory_lifecycle_profile`) did not set an explicit search_path, which
+  Supabase's linter flags as "Function Search Path Mutable." Without an
+  explicit path, a user with CREATE privilege on any schema earlier on the
+  function's search_path could shadow `now()`, the `memory_lifecycle` table,
+  or other referenced identifiers and hijack every memories INSERT and
+  profile UPDATE. Migration 029 adds `SET search_path = public, pg_catalog`
+  to both functions via `CREATE OR REPLACE FUNCTION`. Idempotent; the
+  existing triggers auto-pick-up the new definition. The source of
+  migration 026 has also been patched so fresh installs get the hardened
+  form inline.
+
+  If you run Ogham on Supabase, apply migration 029 by pasting
+  `src/ogham/sql/migrations/029_function_search_path.sql` into
+  Dashboard -> SQL Editor.
+
+### Performance
+
+- **`PostgresBackend.store_memories_batch` now does one multi-row INSERT.**
+  The method was named "batch" but the body looped `cur.execute()` per row.
+  Rewritten to a single multi-row `VALUES` INSERT. Measured 2.4x faster
+  on real ingest workload; benchmark reruns that previously took hours now
+  take minutes. Same rows in, same uuids + timestamps out. A new regression
+  test (`tests/test_postgres_batch_ingest.py`) asserts the single-execute
+  invariant so this can't silently return to per-row form.
+
 ## [0.11.0] - 2026-04-23 -- Memory lifecycle (FRESH / STABLE / EDITING)
 
 ### Added
