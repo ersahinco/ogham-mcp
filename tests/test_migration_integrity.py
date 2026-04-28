@@ -99,6 +99,50 @@ def _hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_danger_rollback_guards_live_inside_transaction():
+    """Every DANGER_*.sql rollback must put its session-variable guard
+    AFTER the first ``BEGIN;`` statement, not before.
+
+    Pre-033 files put the guard before BEGIN, which means a naive
+    ``psql $URL -f file.sql`` without ``ON_ERROR_STOP=1`` prints the
+    ERROR from the failed DO block and then keeps running the
+    destructive ops below. Inside BEGIN, the abort is transactional --
+    all-or-nothing -- which matches the threat model the file header
+    docstring claims ("Piping this file naively will FAIL by design").
+
+    Static contract test: scan every DANGER_*.sql file under
+    ``sql/migrations/rollback/`` and assert the index of the first
+    ``BEGIN`` keyword comes before the first ``current_setting``
+    reference (the guard's distinguishing token).
+    """
+    danger_files = sorted(ROLLBACK_DIR.glob("DANGER_*.sql"))
+    assert danger_files, "expected at least one DANGER_*.sql under sql/migrations/rollback/"
+
+    offenders = []
+    for path in danger_files:
+        text = path.read_text()
+        # Strip line comments so a `-- BEGIN` in a header docstring
+        # doesn't confuse the index search.
+        stripped = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("--")
+        )
+        begin_idx = stripped.find("BEGIN;")
+        guard_idx = stripped.find("current_setting('ogham.confirm_rollback'")
+        if begin_idx == -1 or guard_idx == -1:
+            offenders.append(f"{path.name}: missing BEGIN; or guard reference")
+            continue
+        if guard_idx < begin_idx:
+            offenders.append(
+                f"{path.name}: guard appears at byte {guard_idx} BEFORE BEGIN; "
+                f"at byte {begin_idx}. Move the DO $$ guard $$; block to "
+                f"sit AFTER BEGIN; so a missing session variable aborts the "
+                f"whole transaction (otherwise naive psql -f will run the "
+                f"destructive ops despite the ERROR)."
+            )
+
+    assert not offenders, "DANGER rollback guard placement issue:\n  " + "\n  ".join(offenders)
+
+
 def test_dual_tree_parity():
     """Every file in src/ogham/sql/migrations/ must hash-match its canonical twin.
 

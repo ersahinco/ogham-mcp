@@ -18,6 +18,14 @@
 -- │ design -- the session variable is checked before anything else.    │
 -- └─────────────────────────────────────────────────────────────────────┘
 
+-- Guard lives INSIDE the transaction so that a missing session variable
+-- aborts the whole rollback rather than just the DO block. Putting the
+-- guard before BEGIN means a naive `psql $URL -f file.sql` (without
+-- ON_ERROR_STOP=1) prints the ERROR and keeps running the destructive
+-- ops below. Inside BEGIN, the abort is transactional.
+
+BEGIN;
+
 DO $$
 BEGIN
     IF current_setting('ogham.confirm_rollback', true) IS DISTINCT FROM 'I-KNOW-WHAT-I-AM-DOING' THEN
@@ -26,8 +34,6 @@ BEGIN
             HINT = 'Run "SET ogham.confirm_rollback = ''I-KNOW-WHAT-I-AM-DOING'';" in the same session before this script. See file header for details.';
     END IF;
 END$$;
-
-BEGIN;
 
 DROP INDEX IF EXISTS memories_stage_idx;
 

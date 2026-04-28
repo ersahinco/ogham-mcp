@@ -12,6 +12,14 @@
 -- is set in the session, matching the rollback ritual from the
 -- migration 025/026/028 series.
 
+-- Guard lives INSIDE the transaction so a missing session variable
+-- aborts the whole rollback rather than just the DO block. Putting the
+-- guard before BEGIN means a naive `psql $URL -f file.sql` (without
+-- ON_ERROR_STOP=1) prints the ERROR and keeps running the destructive
+-- ops below. Inside BEGIN, the abort is transactional.
+
+BEGIN;
+
 DO $$
 BEGIN
     IF current_setting('ogham.confirm_rollback', true) IS DISTINCT FROM 'I-KNOW-WHAT-I-AM-DOING' THEN
@@ -20,8 +28,6 @@ BEGIN
             'See sql/migrations/rollback/README.md.';
     END IF;
 END $$;
-
-BEGIN;
 
 DROP INDEX IF EXISTS topic_summaries_embedding_hnsw_idx;
 ALTER TABLE topic_summaries DROP COLUMN embedding;
