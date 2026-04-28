@@ -128,6 +128,60 @@ def test_format_topic_file_omits_source_hash_when_missing():
     assert "source_hash:" not in out
 
 
+# --------------------------------------------------------------------- #
+# v0.13: TLDR fields in Obsidian frontmatter
+# --------------------------------------------------------------------- #
+
+
+def test_format_topic_file_emits_tldr_fields_in_frontmatter_when_present():
+    s = _fake_summary(
+        tldr_short="One paragraph TLDR for wiki-tier1.",
+        tldr_one_line="Wiki-tier1 in one sentence.",
+    )
+    out = _format_topic_file(s, {"wiki-tier1"})
+    assert 'tldr_one_line: "Wiki-tier1 in one sentence."' in out
+    assert 'tldr_short: "One paragraph TLDR for wiki-tier1."' in out
+
+
+def test_format_topic_file_omits_tldr_fields_when_null():
+    """Pre-033 rows have NULL tldr_*; the frontmatter must skip the line entirely.
+
+    Don't emit `tldr_short: null` -- that's noise for users on legacy schemas
+    and Obsidian YAML pickers would treat it as a valid empty string.
+    """
+    s = _fake_summary()  # no tldr_* keys
+    out = _format_topic_file(s, {"wiki-tier1"})
+    assert "tldr_one_line:" not in out
+    assert "tldr_short:" not in out
+
+
+def test_format_topic_file_omits_tldr_fields_when_explicitly_none():
+    s = _fake_summary(tldr_short=None, tldr_one_line=None)
+    out = _format_topic_file(s, {"wiki-tier1"})
+    assert "tldr_one_line:" not in out
+    assert "tldr_short:" not in out
+
+
+def test_format_topic_file_escapes_quotes_and_newlines_in_tldrs():
+    """Defensive: a TLDR containing a double-quote or newline must not break YAML."""
+    s = _fake_summary(
+        tldr_short='Has a "quote" inside.',
+        tldr_one_line="Line with\nbreak.",
+    )
+    out = _format_topic_file(s, {"wiki-tier1"})
+    # Quote escaped, newline encoded.
+    assert r"\"quote\"" in out
+    assert "\\n" in out
+
+
+def test_format_topic_file_emits_only_one_tldr_when_only_one_present():
+    """A row with tldr_short but missing tldr_one_line still exports cleanly."""
+    s = _fake_summary(tldr_short="Short paragraph.")
+    out = _format_topic_file(s, {"wiki-tier1"})
+    assert "tldr_short:" in out
+    assert "tldr_one_line:" not in out
+
+
 def test_format_index_lists_topics():
     summaries = [
         _fake_summary(topic_key="alpha"),

@@ -20,6 +20,7 @@ to synthesize (benchmarks, tests) without pydantic complaining.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -144,3 +145,76 @@ def _anthropic(prompt: str, model: str, system: str | None, max_tokens: int, tim
         data = r.json()
     # Response shape: {"content": [{"type": "text", "text": "..."}]}
     return data["content"][0]["text"]
+
+
+def synthesize_json(
+    prompt: str,
+    *,
+    provider: str,
+    model: str,
+    json_schema: dict[str, Any],
+    system: str | None = None,
+    max_tokens: int = 4096,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Call synthesize() with JSON-mode hint, parse the result.
+
+    Adds a "respond with valid JSON matching this schema" instruction to
+    the system prompt so the model emits structured output instead of
+    prose. Strips markdown code fences if the model wraps its JSON in
+    ```json ... ```. Validates that every field in the schema's
+    ``required`` list is present in the parsed dict.
+
+    Returns the parsed dict. Raises ValueError if the model returns
+    invalid JSON or fails the schema's required-fields check.
+
+    Used by recompute.py to generate body + tldr_short + tldr_one_line
+    in a single LLM call (v0.13 progressive recall).
+    """
+    schema_hint = (
+        "Respond with VALID JSON matching this schema (no prose, no markdown "
+        "fences):\n" + json.dumps(json_schema, indent=2)
+    )
+    full_system = f"{system}\n\n{schema_hint}" if system else schema_hint
+
+    raw = synthesize(
+        prompt=prompt,
+        provider=provider,
+        model=model,
+        system=full_system,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+
+    # Strip markdown fences the model may have added despite instructions.
+    raw = raw.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        title = json_schema.get("title", "<unnamed>")
+        raise ValueError(
+            f"LLM returned invalid JSON for json_schema={title}: {e}\n"
+            f"Raw response (first 500 chars): {raw[:500]}"
+        ) from e
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"LLM returned JSON that is not an object (got {type(parsed).__name__}): {raw[:200]}"
+        )
+
+    required = json_schema.get("required", [])
+    missing = [f for f in required if f not in parsed]
+    if missing:
+        raise ValueError(
+            f"LLM returned JSON missing required fields {missing}. Got keys: {list(parsed.keys())}"
+        )
+
+    return parsed

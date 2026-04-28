@@ -4,6 +4,95 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.0] - 2026-04-28 -- Progressive recall
+
+Multi-resolution topic summaries, an 8-dimension health readout, Go CLI
+parity for the recall fast path, and a single canonical SQL tree.
+
+### New: three resolutions for every wiki page
+
+`compile_wiki` now produces three forms of every topic summary in a
+single LLM call:
+
+- `tldr_one_line` (~50 tokens) -- glanceable status-bar fit.
+- `tldr_short` (~150-300 tokens) -- one-paragraph context preamble.
+- `body` (~1000-2000 tokens) -- the full compiled page.
+
+Two MCP tools gain a `level=` parameter so callers can pick the
+resolution that fits their context budget:
+
+- `query_topic_summary(topic, level="one_line"|"short"|"body")`
+- `hybrid_search(query, wiki_preamble_level="short"|"body")` --
+  **the default flipped from `body` to `short`**, a 3-5x token-cost
+  reduction on the wiki preamble per query. Pass
+  `wiki_preamble_level="body"` to keep v0.12 behavior.
+
+Back-compat: pre-v0.13 rows have NULL `tldr_short` / `tldr_one_line`.
+Asking for `level="short"` on a legacy row returns the body and reports
+`level: "body"` with `requested_level: "short"` so the fallback is
+visible in the response. Recompile with `compile_wiki(topic, force=True)`
+to populate the new columns.
+
+### New: 8-dimension `ogham health`
+
+`ogham health` was binary green/red. v0.13 replaces it with a
+score-out-of-10 readout across eight dimensions: DB freshness, schema
+integrity, hybrid-search latency (p50/p95), corpus size, wiki coverage
+(fresh vs stale summaries), profile health (avg tags + orphan %),
+concurrency (pool busy + max wait), and an end-to-end probe
+(store → search → delete round-trip).
+
+`ogham health --json` emits the same structure for scripting.
+
+### Changed: one canonical SQL tree (Phase B)
+
+For most of v0.12, migrations lived in two places: `sql/migrations/`
+(canonical) and `src/ogham/sql/migrations/` (mirror, shipped in the
+wheel). v0.13 deletes the duplicate. Migrations now live only at
+`sql/migrations/`. The wheel still ships them via hatchling
+`force-include`, so `pip install ogham-mcp` users keep the same import
+path. Self-host upgrade is unchanged.
+
+### Migrations
+
+Two new migrations. Apply in order via Supabase SQL Editor (or psql for
+self-hosters):
+
+```sql
+\i sql/migrations/033_topic_summaries_tldr.sql
+\i sql/migrations/034_wiki_topic_search_tldr.sql
+```
+
+`033` adds `tldr_one_line` and `tldr_short` columns + updates
+`wiki_topic_upsert` to accept the new params.
+`034` widens `wiki_topic_search` `RETURNS TABLE` to surface the new
+columns so `hybrid_search` `wiki_preamble_level=` actually routes by
+level (without 034, the RPC silently dropped the new columns and every
+preamble request fell back to body content).
+
+Idempotent. Pre-existing topic summaries keep their `content` column
+populated and get NULL `tldr_short` / `tldr_one_line`. Recompile when
+ready -- no surprise compute bill from a forced backfill.
+
+### Added
+
+- `tldr_one_line` and `tldr_short` columns on `topic_summaries`.
+- `level=` parameter on `query_topic_summary` and
+  `wiki_preamble_level=` on `hybrid_search`.
+- `health_dimensions.py` module + 8-dim CLI rewire.
+- pyright as CI quality gate.
+
+### Changed
+
+- Default `hybrid_search` wiki preamble: `body` → `short`.
+- `compile_wiki` now generates three resolutions per call (no extra
+  LLM round trips).
+
+### Removed
+
+- `src/ogham/sql/` duplicate migration tree. Migrations are now
+  exclusively at `sql/migrations/`.
+
 ## [0.12.1] - 2026-04-27 -- hybrid_search shape + Supabase fix
 
 ### Fixed

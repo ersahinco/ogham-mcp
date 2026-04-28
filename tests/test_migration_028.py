@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-MIG_025 = Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-MIG_026 = Path(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
-MIG_028 = Path(__file__).parent.parent / "src/ogham/sql/migrations/028_topic_summaries.sql"
+MIG_025 = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
+MIG_026 = Path(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
+MIG_028 = Path(__file__).parent.parent / "sql/migrations/028_topic_summaries.sql"
 ROLLBACK_028 = (
-    Path(__file__).parent.parent / "src/ogham/sql/migrations/DANGER_028_topic_summaries.sql"
+    Path(__file__).parent.parent / "sql/migrations/rollback/DANGER_028_topic_summaries.sql"
 )
 
 

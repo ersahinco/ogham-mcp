@@ -306,5 +306,201 @@ def test_hybrid_search_tool_extract_facts_skips_injection_and_keeps_split():
     assert out == {"results": fake_results, "wiki_preamble": []}
 
 
+# --------------------------------------------------------------------- #
+# v0.13: progressive recall -- preamble level= parameter on hybrid_search
+# --------------------------------------------------------------------- #
+
+
+def _three_form_summary(**overrides):
+    base = {
+        "id": "summary-1",
+        "topic_key": "quantum",
+        "content": "## Overview\n\nFull body, ~1000 tokens.",
+        "tldr_short": "One-paragraph paragraph TLDR, ~150 tokens.",
+        "tldr_one_line": "Quantum stuff in one sentence.",
+        "source_count": 4,
+        "model_used": "openai/gpt-4o-mini",
+        "version": 2,
+        "similarity": 0.78,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_wiki_injection_default_level_is_short():
+    """v0.13: the default preamble level is 'short' -- one-paragraph TLDR."""
+    from ogham import service
+
+    row = _three_form_summary()
+    with (
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.config.settings.wiki_injection_top_k", 3),
+        patch("ogham.config.settings.wiki_injection_min_similarity", 0.4),
+        patch.object(service, "search_summaries", return_value=[row]),
+    ):
+        out = service._wiki_injection_results("work", [0.1] * 512)
+
+    assert len(out) == 1
+    assert out[0]["content"] == "One-paragraph paragraph TLDR, ~150 tokens."
+    assert out[0]["level"] == "short"
+    assert out[0]["metadata"]["level"] == "short"
+
+
+def test_wiki_injection_level_body_returns_full_content():
+    """level='body' restores the v0.12 default (full markdown body)."""
+    from ogham import service
+
+    row = _three_form_summary()
+    with (
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.config.settings.wiki_injection_top_k", 3),
+        patch("ogham.config.settings.wiki_injection_min_similarity", 0.4),
+        patch.object(service, "search_summaries", return_value=[row]),
+    ):
+        out = service._wiki_injection_results("work", [0.1] * 512, level="body")
+
+    assert out[0]["content"].startswith("## Overview")
+    assert out[0]["level"] == "body"
+
+
+def test_wiki_injection_level_one_line_returns_one_sentence():
+    from ogham import service
+
+    row = _three_form_summary()
+    with (
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.config.settings.wiki_injection_top_k", 3),
+        patch("ogham.config.settings.wiki_injection_min_similarity", 0.4),
+        patch.object(service, "search_summaries", return_value=[row]),
+    ):
+        out = service._wiki_injection_results("work", [0.1] * 512, level="one_line")
+
+    assert out[0]["content"] == "Quantum stuff in one sentence."
+    assert out[0]["level"] == "one_line"
+
+
+def test_wiki_injection_level_short_falls_back_to_body_for_pre_033_row():
+    """A pre-033 row has no tldr_short field; preamble must fall back to body."""
+    from ogham import service
+
+    # Row without tldr_short / tldr_one_line keys.
+    row = {
+        "id": "summary-1",
+        "topic_key": "legacy",
+        "content": "## Body only\n\nLegacy row.",
+        "source_count": 2,
+        "model_used": "openai/gpt-4o",
+        "version": 1,
+        "similarity": 0.5,
+    }
+    with (
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.config.settings.wiki_injection_top_k", 3),
+        patch("ogham.config.settings.wiki_injection_min_similarity", 0.4),
+        patch.object(service, "search_summaries", return_value=[row]),
+    ):
+        out = service._wiki_injection_results("work", [0.1] * 512, level="short")
+
+    # Fell back to body content; level reports 'body'. requested_level +
+    # fallback_reason surface the gap so callers can audit token cost.
+    assert out[0]["content"] == "## Body only\n\nLegacy row."
+    assert out[0]["level"] == "body"
+    assert out[0]["requested_level"] == "short"
+    assert out[0]["fallback_reason"] == "tldr_column_null"
+
+
+def test_wiki_injection_no_fallback_omits_requested_level_field():
+    """Happy path: requested level is served, requested_level/fallback_reason absent."""
+    from ogham import service
+
+    row = {
+        "id": "summary-2",
+        "topic_key": "fresh",
+        "content": "## Body\n\nFresh row.",
+        "tldr_short": "Short paragraph.",
+        "tldr_one_line": "One line.",
+        "source_count": 3,
+        "model_used": "openai/gpt-4o",
+        "version": 2,
+        "similarity": 0.7,
+    }
+    with (
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.config.settings.wiki_injection_top_k", 3),
+        patch("ogham.config.settings.wiki_injection_min_similarity", 0.4),
+        patch.object(service, "search_summaries", return_value=[row]),
+    ):
+        out = service._wiki_injection_results("work", [0.1] * 512, level="short")
+
+    assert out[0]["content"] == "Short paragraph."
+    assert out[0]["level"] == "short"
+    assert "requested_level" not in out[0]
+    assert "fallback_reason" not in out[0]
+
+
+def test_wiki_injection_unknown_level_returns_empty_with_warning(caplog):
+    """Bad level= shouldn't crash search; it logs and returns empty."""
+    import logging
+
+    from ogham import service
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch.object(service, "search_summaries") as searched,
+    ):
+        out = service._wiki_injection_results("work", [0.1] * 512, level="bogus")
+
+    assert out == []
+    searched.assert_not_called()
+    assert any("unknown level" in r.message for r in caplog.records)
+
+
+def test_hybrid_search_default_preamble_level_is_short():
+    """The MCP tool's default for wiki_preamble_level is 'short' (v0.13)."""
+    from ogham.tools import memory as memory_tools
+
+    fake_results = [{"id": "mem-1", "content": "real", "result_type": "memory"}]
+    captured: dict = {}
+
+    def capture(profile, embedding, *, level="short"):
+        captured["level"] = level
+        return []
+
+    with (
+        patch.object(memory_tools, "get_active_profile", return_value="work"),
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.service.search_memories_enriched", return_value=fake_results),
+        patch("ogham.service._wiki_injection_results", side_effect=capture),
+        patch("ogham.embeddings.generate_embedding", return_value=[0.1] * 512),
+    ):
+        memory_tools.hybrid_search(query="quantum", limit=10)
+
+    assert captured["level"] == "short"
+
+
+def test_hybrid_search_preamble_level_body_overrides_default():
+    """Callers can opt back into v0.12 'body' preamble for benchmark parity."""
+    from ogham.tools import memory as memory_tools
+
+    fake_results = [{"id": "mem-1", "content": "real", "result_type": "memory"}]
+    captured: dict = {}
+
+    def capture(profile, embedding, *, level="short"):
+        captured["level"] = level
+        return []
+
+    with (
+        patch.object(memory_tools, "get_active_profile", return_value="work"),
+        patch("ogham.config.settings.wiki_injection_enabled", True),
+        patch("ogham.service.search_memories_enriched", return_value=fake_results),
+        patch("ogham.service._wiki_injection_results", side_effect=capture),
+        patch("ogham.embeddings.generate_embedding", return_value=[0.1] * 512),
+    ):
+        memory_tools.hybrid_search(query="quantum", limit=10, wiki_preamble_level="body")
+
+    assert captured["level"] == "body"
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

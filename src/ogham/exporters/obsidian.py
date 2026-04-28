@@ -52,8 +52,30 @@ class ExportResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _yaml_quote(value: str) -> str:
+    """Quote a string for safe YAML scalar embedding.
+
+    Wraps in double quotes and escapes embedded backslashes + double quotes.
+    Used for TLDR fields where multi-line / colon-bearing content would
+    break a plain scalar. Single-line summaries stay readable; pathological
+    inputs (newlines, control chars) are escaped via JSON-compatible rules.
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    # Collapse newlines into the YAML escape so the frontmatter block stays
+    # one logical scalar per line. The agent rendering this typically
+    # rejoins for display anyway.
+    escaped = escaped.replace("\n", "\\n").replace("\r", "\\r")
+    return f'"{escaped}"'
+
+
 def _format_frontmatter(summary: dict[str, Any], topic_keys: set[str]) -> str:
-    """YAML frontmatter block with provenance + Obsidian-friendly extras."""
+    """YAML frontmatter block with provenance + Obsidian-friendly extras.
+
+    v0.13: when the row carries `tldr_one_line` / `tldr_short` (post-033
+    schema), surface them in the frontmatter so Obsidian queries can pull
+    out the cheap forms without re-parsing the body. Pre-033 rows skip
+    these fields entirely (NULL = absent in the YAML, not `null` literal).
+    """
     source_hash = summary.get("source_hash")
     if isinstance(source_hash, (bytes, bytearray, memoryview)):
         source_hash_hex = bytes(source_hash).hex()
@@ -75,6 +97,16 @@ def _format_frontmatter(summary: dict[str, Any], topic_keys: set[str]) -> str:
     ]
     if source_hash_hex:
         lines.append(f"source_hash: {source_hash_hex}")
+
+    # v0.13 progressive-recall fields. Skipped when null (pre-033 rows or
+    # rows that failed three-form generation).
+    tldr_one_line = summary.get("tldr_one_line")
+    if tldr_one_line:
+        lines.append(f"tldr_one_line: {_yaml_quote(str(tldr_one_line))}")
+    tldr_short = summary.get("tldr_short")
+    if tldr_short:
+        lines.append(f"tldr_short: {_yaml_quote(str(tldr_short))}")
+
     # Obsidian convention: tags as a YAML list. Surface the topic_key
     # itself plus a generic "ogham/wiki" tag so the vault's tag pane
     # has a sensible top-level grouping.

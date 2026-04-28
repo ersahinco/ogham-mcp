@@ -207,8 +207,169 @@ def test_synthesize_unknown_provider_raises():
 def test_synthesize_missing_api_key_raises(monkeypatch):
     """Provider that requires a key but the env var is unset."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Pydantic settings loads from .env / ~/.ogham/config.env -- patch the
+    # attribute too so the fallback in synthesize() can't pick up a real key.
+    from ogham import llm as _llm
+
+    monkeypatch.setattr(_llm.settings, "openai_api_key", None, raising=False)
 
     from ogham.llm import synthesize
 
     with pytest.raises((RuntimeError, ValueError)):
         synthesize(prompt="x", provider="openai", model="gpt-4o-mini")
+
+
+# ---------- synthesize_json: structured output for v0.13 progressive recall ----
+
+
+def test_synthesize_json_returns_parsed_dict(monkeypatch):
+    """synthesize_json wraps synthesize and parses the JSON response."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    fake_response = (
+        '{"body": "full body here", "tldr_short": "paragraph", "tldr_one_line": "one line"}'
+    )
+    resp = _mock_response(json_body={"choices": [{"message": {"content": fake_response}}]})
+    patcher, _client = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {
+        "type": "object",
+        "required": ["body", "tldr_short", "tldr_one_line"],
+        "properties": {
+            "body": {"type": "string"},
+            "tldr_short": {"type": "string"},
+            "tldr_one_line": {"type": "string"},
+        },
+    }
+
+    with patcher:
+        result = synthesize_json(
+            prompt="summarize this",
+            provider="openai",
+            model="gpt-4o-mini",
+            json_schema=schema,
+        )
+
+    assert result == {
+        "body": "full body here",
+        "tldr_short": "paragraph",
+        "tldr_one_line": "one line",
+    }
+
+
+def test_synthesize_json_strips_markdown_fences(monkeypatch):
+    """Models often wrap JSON in ```json ... ``` despite the instruction not to."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    fenced = '```json\n{"body": "x", "tldr_short": "y", "tldr_one_line": "z"}\n```'
+    resp = _mock_response(json_body={"choices": [{"message": {"content": fenced}}]})
+    patcher, _ = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {
+        "type": "object",
+        "required": ["body", "tldr_short", "tldr_one_line"],
+    }
+    with patcher:
+        result = synthesize_json(
+            prompt="x", provider="openai", model="gpt-4o-mini", json_schema=schema
+        )
+
+    assert result["body"] == "x"
+    assert result["tldr_short"] == "y"
+    assert result["tldr_one_line"] == "z"
+
+
+def test_synthesize_json_strips_bare_fence_without_lang(monkeypatch):
+    """Some providers emit ``` ... ``` without a language tag."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    fenced = '```\n{"body": "a"}\n```'
+    resp = _mock_response(json_body={"choices": [{"message": {"content": fenced}}]})
+    patcher, _ = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {"type": "object", "required": ["body"]}
+    with patcher:
+        result = synthesize_json(
+            prompt="x", provider="openai", model="gpt-4o-mini", json_schema=schema
+        )
+
+    assert result["body"] == "a"
+
+
+def test_synthesize_json_missing_required_field_raises(monkeypatch):
+    """If a required field is absent the helper raises ValueError, not silently returns partial."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    resp = _mock_response(json_body={"choices": [{"message": {"content": '{"body": "x"}'}}]})
+    patcher, _ = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {
+        "type": "object",
+        "required": ["body", "tldr_short", "tldr_one_line"],
+    }
+    with patcher:
+        with pytest.raises(ValueError, match="missing required fields"):
+            synthesize_json(prompt="x", provider="openai", model="gpt-4o-mini", json_schema=schema)
+
+
+def test_synthesize_json_invalid_json_raises(monkeypatch):
+    """Garbage in -> ValueError out."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    resp = _mock_response(json_body={"choices": [{"message": {"content": "not json at all"}}]})
+    patcher, _ = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {"type": "object", "required": ["body"]}
+    with patcher:
+        with pytest.raises(ValueError, match="invalid JSON"):
+            synthesize_json(prompt="x", provider="openai", model="gpt-4o-mini", json_schema=schema)
+
+
+def test_synthesize_json_layered_system_prompt(monkeypatch):
+    """When the caller passes a system prompt, schema hint is appended (not replaced)."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    resp = _mock_response(json_body={"choices": [{"message": {"content": '{"body": "ok"}'}}]})
+    patcher, client = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {"type": "object", "required": ["body"], "title": "test_layered"}
+    with patcher:
+        synthesize_json(
+            prompt="x",
+            provider="openai",
+            model="gpt-4o-mini",
+            json_schema=schema,
+            system="you are a wiki compiler",
+        )
+
+    body = client.post.call_args.kwargs["json"]
+    system_msg = body["messages"][0]
+    assert system_msg["role"] == "system"
+    # Original system prompt preserved.
+    assert "you are a wiki compiler" in system_msg["content"]
+    # Schema hint appended.
+    assert "VALID JSON" in system_msg["content"]
+    assert "test_layered" in system_msg["content"]
+
+
+def test_synthesize_json_non_object_root_raises(monkeypatch):
+    """JSON scalars/arrays at root are rejected: schema requires an object."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    resp = _mock_response(
+        json_body={"choices": [{"message": {"content": '["just", "an", "array"]'}}]}
+    )
+    patcher, _ = _patch_post(resp)
+
+    from ogham.llm import synthesize_json
+
+    schema = {"type": "object", "required": ["body"]}
+    with patcher:
+        with pytest.raises(ValueError, match="not an object"):
+            synthesize_json(prompt="x", provider="openai", model="gpt-4o-mini", json_schema=schema)

@@ -96,15 +96,11 @@ def _apply_lifecycle_migrations():
         )
         col_names = {str(r["column_name"]) for r in cols}
         if "stage" not in col_names:
-            mig_025 = (
-                Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-            )
+            mig_025 = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
             backend._execute(mig_025.read_text(), fetch="none")
 
         # Apply 026.
-        mig_026 = (
-            Path(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
-        )
+        mig_026 = Path(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
         backend._execute(mig_026.read_text(), fetch="none")
     except Exception:
         # Tests that need the columns will still skip via _can_connect
@@ -175,13 +171,9 @@ def pg_test_profile():
     # If memory_lifecycle isn't there yet, apply 025 (if needed) then 026.
     if not _table_exists("memory_lifecycle"):
         if "stage" not in _col_names("memories"):
-            mig_025 = (
-                Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-            )
+            mig_025 = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
             backend._execute(mig_025.read_text(), fetch="none")
-        mig_026 = (
-            Path(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
-        )
+        mig_026 = Path(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
         backend._execute(mig_026.read_text(), fetch="none")
 
     backend._execute(

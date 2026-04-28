@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-MIG_025 = Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-MIG_026 = Path(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
+MIG_025 = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
+MIG_026 = Path(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
 ROLLBACK_026 = (
-    Path(__file__).parent.parent / "src/ogham/sql/migrations/DANGER_026_memory_lifecycle_split.sql"
+    Path(__file__).parent.parent / "sql/migrations/rollback/DANGER_026_memory_lifecycle_split.sql"
 )
 
 

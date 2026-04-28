@@ -118,25 +118,55 @@ def config(
             console.print(f"  {values}")
 
 
+_ZONE_ICON = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴"}
+_ZONE_STYLE = {"GREEN": "green", "AMBER": "yellow", "RED": "red"}
+
+
 @app.command()
-def health():
-    """Check connectivity to Supabase and embedding provider."""
-    from ogham.health import full_health_check
+def health(
+    profile: Optional[str] = typer.Option(None, help="Profile to score (default: active profile)"),
+    output_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+):
+    """8-dimension health readout (score 0-10 per dim)."""
+    from ogham.config import settings
+    from ogham.health_dimensions import compose_health, overall_score
 
-    result = full_health_check()
+    target = profile or settings.default_profile
+    results = compose_health(target)
+    overall = overall_score(results)
+    overall_zone = "GREEN" if overall >= 8.0 else "AMBER" if overall >= 5.0 else "RED"
 
-    table = Table(title="Health Check")
-    table.add_column("Component", style="bold")
-    table.add_column("Status")
-    table.add_column("Details")
+    if output_json:
+        payload = {
+            "profile": target,
+            "overall_score": overall,
+            "overall_zone": overall_zone,
+            "dimensions": [r.to_dict() for r in results],
+        }
+        print(json.dumps(payload, default=str))
+        return
 
-    for component, details in result.items():
-        status = details.get("status", "unknown")
-        style = "green" if status == "ok" else "red" if status == "error" else "yellow"
-        info = {k: v for k, v in details.items() if k != "status"}
-        table.add_row(component, f"[{style}]{status}[/{style}]", str(info) if info else "")
+    table = Table(title=f"Ogham Health -- profile '{target}'")
+    table.add_column("#", justify="right", width=3)
+    table.add_column("Name", style="bold", width=18)
+    table.add_column("Zone", width=10)
+    table.add_column("Score", justify="right", width=6)
+    table.add_column("Detail")
+
+    for i, r in enumerate(results, start=1):
+        icon = _ZONE_ICON.get(r.zone, "")
+        style = _ZONE_STYLE.get(r.zone, "")
+        zone_cell = f"{icon} [{style}]{r.zone}[/{style}]" if style else f"{icon} {r.zone}"
+        table.add_row(str(i), r.name, zone_cell, f"{r.score:.1f}", r.detail)
 
     console.print(table)
+    overall_style = _ZONE_STYLE.get(overall_zone, "")
+    overall_icon = _ZONE_ICON.get(overall_zone, "")
+    console.print(
+        f"\nOverall: {overall_icon} "
+        f"[{overall_style}]{overall_zone}[/{overall_style}] "
+        f"(avg {overall:.1f} / 10)"
+    )
 
 
 @app.command()

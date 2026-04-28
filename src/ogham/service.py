@@ -50,7 +50,22 @@ from ogham.topic_summaries import search_summaries
 logger = logging.getLogger(__name__)
 
 
-def _wiki_injection_results(profile: str, query_embedding: list[float]) -> list[dict[str, Any]]:
+# v0.13: progressive-recall preamble level mapping. Mirrors tools/wiki.py
+# but kept duplicated to avoid the service layer importing the tools layer
+# (which would create an import cycle through ogham.app).
+_PREAMBLE_LEVEL_TO_COLUMN: dict[str, str] = {
+    "body": "content",
+    "short": "tldr_short",
+    "one_line": "tldr_one_line",
+}
+
+
+def _wiki_injection_results(
+    profile: str,
+    query_embedding: list[float],
+    *,
+    level: str = "short",
+) -> list[dict[str, Any]]:
     """Top-K topic summaries to prepend to search results.
 
     Returns an empty list when the feature flag is off, the embedding
@@ -66,12 +81,29 @@ def _wiki_injection_results(profile: str, query_embedding: list[float]) -> list[
     a customer hits cost or token issues we can revisit by capping
     total result size, but the cleaner default is "context preamble
     on top of the asked-for results."
+
+    v0.13 progressive recall: ``level`` selects which column populates
+    the preamble's ``content``. Default 'short' (~150-300 tokens) cuts
+    typical preamble size 3-5x vs the v0.12 'body' default (~1000-2000
+    tokens). Falls back to body when the requested column is NULL on
+    the row (pre-033 schemas, or rows that failed three-form generation),
+    and reports the served level on each result so callers can audit
+    actual token cost.
     """
     from ogham.config import settings
 
     if not settings.wiki_injection_enabled:
         return []
     if not query_embedding:
+        return []
+    if level not in _PREAMBLE_LEVEL_TO_COLUMN:
+        # Defensive: caller pumped a bad string through. Surface as if no
+        # preamble matched rather than crashing the search call.
+        logger.warning(
+            "wiki injection: unknown level %r, expected one of %s",
+            level,
+            sorted(_PREAMBLE_LEVEL_TO_COLUMN),
+        )
         return []
 
     try:
@@ -91,26 +123,48 @@ def _wiki_injection_results(profile: str, query_embedding: list[float]) -> list[
     if not rows:
         return []
 
+    column = _PREAMBLE_LEVEL_TO_COLUMN[level]
     injected: list[dict[str, Any]] = []
     for row in rows:
-        injected.append(
-            {
-                "id": str(row["id"]),
-                "result_type": "wiki_summary",
+        served_level = level
+        fallback_reason: str | None = None
+        content = row.get(column)
+        if not content and level != "body":
+            # Pre-033 row, or row whose three-form generation didn't populate
+            # the requested column. Fall back to body; the caller pays more
+            # tokens than they wanted, but at least gets context.
+            content = row.get("content") or ""
+            served_level = "body"
+            fallback_reason = "tldr_column_null"
+        if content is None:
+            content = ""
+
+        entry: dict[str, Any] = {
+            "id": str(row["id"]),
+            "result_type": "wiki_summary",
+            "topic_key": row["topic_key"],
+            "content": content,
+            "level": served_level,
+            "source_count": row.get("source_count"),
+            "model_used": row.get("model_used"),
+            "version": row.get("version"),
+            "similarity": row.get("similarity"),
+            "tags": [f"wiki:{row['topic_key']}"],
+            "metadata": {
+                "wiki_summary_id": str(row["id"]),
                 "topic_key": row["topic_key"],
-                "content": row.get("content") or "",
-                "source_count": row.get("source_count"),
-                "model_used": row.get("model_used"),
                 "version": row.get("version"),
-                "similarity": row.get("similarity"),
-                "tags": [f"wiki:{row['topic_key']}"],
-                "metadata": {
-                    "wiki_summary_id": str(row["id"]),
-                    "topic_key": row["topic_key"],
-                    "version": row.get("version"),
-                },
-            }
-        )
+                "level": served_level,
+            },
+        }
+        # Only set requested_level / fallback_reason when a fallback occurred,
+        # matching the pattern in tools/wiki.py:query_topic_summary so the three
+        # tools (compile_wiki, query_topic_summary, hybrid_search wiki_preamble)
+        # report fallback consistently and callers can audit token cost.
+        if fallback_reason is not None:
+            entry["requested_level"] = level
+            entry["fallback_reason"] = fallback_reason
+        injected.append(entry)
     return injected
 
 

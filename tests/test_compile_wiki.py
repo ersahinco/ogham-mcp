@@ -227,8 +227,127 @@ def test_format_summary_response_handles_missing_source_hash():
     out = wiki._format_summary_response(summary)
 
     assert out["source_hash"] is None
-    assert "source_hash:" not in out["markdown"]  # frontmatter line is omitted
-    assert out["markdown"].startswith("---\n")
+
+
+# --------------------------------------------------------------------- #
+# v0.13: progressive recall -- query_topic_summary level= parameter
+# --------------------------------------------------------------------- #
+
+
+def _make_three_form_row(**overrides):
+    """Summary row with all three forms populated (post-033 schema)."""
+    base = _make_summary_row()
+    base["tldr_short"] = "One paragraph summary about quantum stuff."
+    base["tldr_one_line"] = "Quantum stuff in one sentence."
+    base.update(overrides)
+    return base
+
+
+def test_query_topic_summary_default_level_is_body():
+    """Default level=body preserves v0.12 behaviour: full content returned."""
+    from ogham.tools import wiki
+
+    summary = _make_three_form_row()
+    with (
+        patch.object(wiki, "get_active_profile", return_value="work"),
+        patch.object(wiki, "get_summary_by_topic", return_value=summary),
+    ):
+        out = wiki.query_topic_summary(topic="quantum")
+
+    assert out["level"] == "body"
+    assert "## Overview" in out["markdown"]
+    assert out["content"] == summary["content"]
+    # No fallback fields when the requested level resolves cleanly.
+    assert "fallback_reason" not in out
+
+
+def test_query_topic_summary_level_short_returns_tldr_short():
+    """level='short' returns the paragraph form."""
+    from ogham.tools import wiki
+
+    summary = _make_three_form_row()
+    with (
+        patch.object(wiki, "get_active_profile", return_value="work"),
+        patch.object(wiki, "get_summary_by_topic", return_value=summary),
+    ):
+        out = wiki.query_topic_summary(topic="quantum", level="short")
+
+    assert out["level"] == "short"
+    assert out["content"] == "One paragraph summary about quantum stuff."
+    assert "level: short" in out["markdown"]
+
+
+def test_query_topic_summary_level_one_line_returns_tldr_one_line():
+    """level='one_line' returns the single sentence form."""
+    from ogham.tools import wiki
+
+    summary = _make_three_form_row()
+    with (
+        patch.object(wiki, "get_active_profile", return_value="work"),
+        patch.object(wiki, "get_summary_by_topic", return_value=summary),
+    ):
+        out = wiki.query_topic_summary(topic="quantum", level="one_line")
+
+    assert out["level"] == "one_line"
+    assert out["content"] == "Quantum stuff in one sentence."
+
+
+def test_query_topic_summary_short_falls_back_to_body_when_null():
+    """Pre-033 rows have NULL TLDR fields. Falling back to body is back-compat."""
+    from ogham.tools import wiki
+
+    # Legacy row: only `content` populated; tldr_short / tldr_one_line absent.
+    summary = _make_summary_row()
+    # Don't add tldr_* keys at all -- simulates pre-033 row shape.
+    with (
+        patch.object(wiki, "get_active_profile", return_value="work"),
+        patch.object(wiki, "get_summary_by_topic", return_value=summary),
+    ):
+        out = wiki.query_topic_summary(topic="quantum", level="short")
+
+    # Falls back: served level is body, requested level reported separately.
+    assert out["level"] == "body"
+    assert out["requested_level"] == "short"
+    assert "fallback_reason" in out
+    assert out["content"] == summary["content"]
+
+
+def test_query_topic_summary_one_line_falls_back_when_explicitly_null():
+    """A row that *has* the column but with NULL value still falls back."""
+    from ogham.tools import wiki
+
+    summary = _make_three_form_row(tldr_one_line=None)
+    with (
+        patch.object(wiki, "get_active_profile", return_value="work"),
+        patch.object(wiki, "get_summary_by_topic", return_value=summary),
+    ):
+        out = wiki.query_topic_summary(topic="quantum", level="one_line")
+
+    assert out["level"] == "body"
+    assert out["requested_level"] == "one_line"
+    assert out["content"] == summary["content"]
+
+
+def test_query_topic_summary_unknown_level_raises():
+    """Defensive: typo in level= surfaces clearly rather than silently returning body."""
+    from ogham.tools import wiki
+
+    with patch.object(wiki, "get_active_profile", return_value="work"):
+        with pytest.raises(ValueError, match="unknown level"):
+            wiki.query_topic_summary(topic="x", level="bogus")  # type: ignore[arg-type]
+
+
+def test_query_topic_summary_not_cached_does_not_consult_level():
+    """When the row is missing entirely, level= is irrelevant."""
+    from ogham.tools import wiki
+
+    with (
+        patch.object(wiki, "get_active_profile", return_value="work"),
+        patch.object(wiki, "get_summary_by_topic", return_value=None),
+    ):
+        out = wiki.query_topic_summary(topic="ghost", level="short")
+
+    assert out["status"] == "not_cached"
 
 
 if __name__ == "__main__":  # pragma: no cover

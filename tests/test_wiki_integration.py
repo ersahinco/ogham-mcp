@@ -28,16 +28,14 @@ from unittest.mock import patch
 
 import pytest
 
-MIG_025 = Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-MIG_026 = Path(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
-MIG_028 = Path(__file__).parent.parent / "src/ogham/sql/migrations/028_topic_summaries.sql"
-MIG_030 = (
-    Path(__file__).parent.parent / "src/ogham/sql/migrations/030_topic_summaries_dim_agnostic.sql"
-)
-MIG_031 = Path(__file__).parent.parent / "src/ogham/sql/migrations/031_wiki_rpc_functions.sql"
-DANGER_028 = (
-    Path(__file__).parent.parent / "src/ogham/sql/migrations/DANGER_028_topic_summaries.sql"
-)
+MIG_025 = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
+MIG_026 = Path(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
+MIG_028 = Path(__file__).parent.parent / "sql/migrations/028_topic_summaries.sql"
+MIG_030 = Path(__file__).parent.parent / "sql/migrations/030_topic_summaries_dim_agnostic.sql"
+MIG_031 = Path(__file__).parent.parent / "sql/migrations/031_wiki_rpc_functions.sql"
+MIG_033 = Path(__file__).parent.parent / "sql/migrations/033_topic_summaries_tldr.sql"
+MIG_034 = Path(__file__).parent.parent / "sql/migrations/034_wiki_topic_search_tldr.sql"
+DANGER_028 = Path(__file__).parent.parent / "sql/migrations/rollback/DANGER_028_topic_summaries.sql"
 
 
 def _can_connect() -> bool:
@@ -76,6 +74,13 @@ def _apply_028(pg_fresh_db):
     pg_fresh_db.apply_sql(MIG_028)
     pg_fresh_db.apply_sql(MIG_030)
     pg_fresh_db.apply_sql(MIG_031)
+    # v0.13: migration 033 grew wiki_topic_upsert RPC's signature; the
+    # Python backend always passes the new params (NULL is fine), so the
+    # RPC must exist at the new arity.
+    pg_fresh_db.apply_sql(MIG_033)
+    # v0.13 + 034: wiki_topic_search RETURNS TABLE widened to include the
+    # tldr columns so service._wiki_injection_results can route by level.
+    pg_fresh_db.apply_sql(MIG_034)
 
 
 def _seed_memories_with_tag(
@@ -268,6 +273,43 @@ def test_search_summaries_ranks_closer_embedding_first(pg_fresh_db):
     assert results[0]["similarity"] >= results[1]["similarity"]
 
 
+def test_search_summaries_returns_tldr_columns(pg_fresh_db):
+    """v0.13: wiki_topic_search RPC must surface tldr_one_line / tldr_short.
+
+    Regression guard for the 034 migration. Before 034, the RPC's RETURNS
+    TABLE shape only exposed the body content, so service._wiki_injection_results
+    silently fell back to body for level=short / level=one_line on every
+    request -- the BEAM scorer didn't catch this because it reads results,
+    not wiki_preamble.
+    """
+    _apply_028(pg_fresh_db)
+    seed_ids = _seed_memories_with_tag(1, tag="tldr-rpc-shape")
+
+    from ogham.topic_summaries import search_summaries, upsert_summary
+
+    upsert_summary(
+        profile="test-025",
+        topic_key="tldr-rpc-shape",
+        content="full body content",
+        embedding=[0.5] * 512,
+        source_memory_ids=seed_ids,
+        model_used="test/test",
+        tldr_one_line="one line summary",
+        tldr_short="short paragraph summary",
+    )
+
+    rows = search_summaries("test-025", [0.5] * 512, top_k=1, min_similarity=0.0)
+    assert len(rows) == 1
+    row = rows[0]
+    # Without 034, "tldr_one_line" and "tldr_short" would be missing from
+    # the returned dict (RPC RETURNS TABLE didn't include them). 034 widens
+    # the return shape so the values flow through.
+    assert "tldr_one_line" in row, "wiki_topic_search must return tldr_one_line (migration 034)"
+    assert "tldr_short" in row, "wiki_topic_search must return tldr_short (migration 034)"
+    assert row["tldr_one_line"] == "one line summary"
+    assert row["tldr_short"] == "short paragraph summary"
+
+
 # --------------------------------------------------------------------- #
 # wiki_lint (T1.6) — find_X functions against real DB
 # --------------------------------------------------------------------- #
@@ -371,9 +413,15 @@ def test_compile_wiki_end_to_end_writes_to_topic_summaries(pg_fresh_db):
 
     from ogham.tools import wiki
 
+    three_forms = {
+        "body": "## Overview\n\ncompiled body",
+        "tldr_short": "Compiled body summary in one paragraph.",
+        "tldr_one_line": "Compiled body summary.",
+    }
+
     with (
         patch.object(wiki, "get_active_profile", return_value="test-025"),
-        patch("ogham.recompute.synthesize", return_value="## Overview\n\ncompiled body"),
+        patch("ogham.recompute.synthesize_json", return_value=three_forms),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         out = wiki.compile_wiki(topic="e2e-compile")
@@ -384,14 +432,51 @@ def test_compile_wiki_end_to_end_writes_to_topic_summaries(pg_fresh_db):
     assert "## Overview" in out["markdown"]
     assert out["markdown"].startswith("---\n")  # frontmatter present
 
-    # Cache row really exists.
+    # Cache row really exists with all three forms populated.
     from ogham.topic_summaries import get_summary_by_topic
 
     row = get_summary_by_topic("test-025", "e2e-compile")
     assert row is not None
     assert row["status"] == "fresh"
     assert row["source_count"] == 3
+    assert row["content"] == "## Overview\n\ncompiled body"
+    # v0.13: TLDR forms persisted via the migration-033 columns.
+    assert row["tldr_short"] == "Compiled body summary in one paragraph."
+    assert row["tldr_one_line"] == "Compiled body summary."
     assert sorted(seed_ids)  # silence unused-var warning; we already used the ids
+
+
+def test_compile_wiki_three_forms_written_in_single_llm_call(pg_fresh_db):
+    """v0.13: synthesize_json is called exactly once and produces all three forms.
+
+    The end-to-end path must NOT make three separate LLM calls -- the whole
+    point of the JSON-structured-output design is one call, three values.
+    """
+    _apply_028(pg_fresh_db)
+    _seed_memories_with_tag(2, tag="single-call")
+
+    from ogham.tools import wiki
+
+    three_forms = {
+        "body": "Body here. [Sources: ...]",
+        "tldr_short": "Short paragraph form.",
+        "tldr_one_line": "One-liner form.",
+    }
+
+    with (
+        patch.object(wiki, "get_active_profile", return_value="test-025"),
+        patch("ogham.recompute.synthesize_json", return_value=three_forms) as mock_synth,
+        patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
+    ):
+        wiki.compile_wiki(topic="single-call")
+
+    assert mock_synth.call_count == 1, "v0.13 contract: one LLM call per recompute, not three"
+    # The call sent the three-form schema to the LLM.
+    schema = mock_synth.call_args.kwargs["json_schema"]
+    required = schema.get("required", [])
+    assert "body" in required
+    assert "tldr_short" in required
+    assert "tldr_one_line" in required
 
 
 def test_compile_wiki_no_sources_doesnt_create_row(pg_fresh_db):
@@ -405,6 +490,48 @@ def test_compile_wiki_no_sources_doesnt_create_row(pg_fresh_db):
 
     assert out["status"] == "no_sources"
     assert get_summary_by_topic("test-025", "ghost-no-mems") is None
+
+
+# --------------------------------------------------------------------- #
+# v0.13: query_topic_summary level= against a live DB row
+# --------------------------------------------------------------------- #
+
+
+def test_query_topic_summary_level_short_live_returns_tldr_short(pg_fresh_db):
+    """End-to-end: compile_wiki populates all three forms; query at level='short'
+    returns the tldr_short column from the persisted row.
+    """
+    _apply_028(pg_fresh_db)
+    _seed_memories_with_tag(2, tag="level-int")
+
+    from ogham.tools import wiki
+
+    three_forms = {
+        "body": "## Long form\n\nLots of detail here.",
+        "tldr_short": "Short paragraph form, ~150 tokens.",
+        "tldr_one_line": "One sentence.",
+    }
+
+    with (
+        patch.object(wiki, "get_active_profile", return_value="test-025"),
+        patch("ogham.recompute.synthesize_json", return_value=three_forms),
+        patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
+    ):
+        wiki.compile_wiki(topic="level-int")
+
+        # Now query at each level.
+        body_resp = wiki.query_topic_summary(topic="level-int")
+        short_resp = wiki.query_topic_summary(topic="level-int", level="short")
+        one_line_resp = wiki.query_topic_summary(topic="level-int", level="one_line")
+
+    assert body_resp["level"] == "body"
+    assert body_resp["content"] == three_forms["body"]
+
+    assert short_resp["level"] == "short"
+    assert short_resp["content"] == three_forms["tldr_short"]
+
+    assert one_line_resp["level"] == "one_line"
+    assert one_line_resp["content"] == three_forms["tldr_one_line"]
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -24,7 +24,7 @@ from ogham.config import settings
 from ogham.data.loader import get_wiki_compile
 from ogham.database import get_backend
 from ogham.embeddings import generate_embedding
-from ogham.llm import synthesize
+from ogham.llm import synthesize_json
 from ogham.topic_summaries import compute_source_hash, get_summary_by_topic, upsert_summary
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,45 @@ _PROMPT_TOKEN_WARN = 10_000
 # usually signal a compile prompt that didn't anchor the LLM tightly
 # enough, or a source memory that was itself massive and got echoed.
 _OUTPUT_LEN_WARN_CHARS = 25_000
+
+# JSON schema for the three-form synthesize call (v0.13 progressive recall).
+# A single LLM call produces all three forms so they share voice and the
+# extra output cost is marginal compared to three separate calls. The schema's
+# `required` list is enforced by synthesize_json -- a model that returns only
+# `body` raises ValueError, which the executor logs and Letta-#3270 guard
+# leaves the previous fresh row intact.
+TLDR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "title": "wiki_topic_three_forms",
+    "required": ["body", "tldr_short", "tldr_one_line"],
+    "properties": {
+        "body": {
+            "type": "string",
+            "description": (
+                "Full markdown body. Synthesizes all source memories into a "
+                "coherent ~500-1500 word page. Include section headers, "
+                "concrete details, and a Sources list citing every memory id."
+            ),
+        },
+        "tldr_short": {
+            "type": "string",
+            "description": (
+                "One paragraph (~150-300 tokens). The 'cheap context preamble' "
+                "form -- what an agent injects into a 200-token wiki preamble "
+                "at retrieval time. Must be self-contained: no 'see body for "
+                "details' references."
+            ),
+        },
+        "tldr_one_line": {
+            "type": "string",
+            "description": (
+                "Single sentence (~30-50 tokens). The glanceable form. Useful "
+                "in status bars, list views, or as the cheapest possible "
+                "recall. One sentence, period."
+            ),
+        },
+    },
+}
 
 
 def recompute_topic_summary(
@@ -109,18 +148,26 @@ def recompute_topic_summary(
     # 4. Synthesize. Failures propagate -- previous fresh row stays intact.
     used_provider = provider or getattr(settings, "llm_provider", "ollama")
     used_model = model or getattr(settings, "llm_model", "llama3.2")
-    composed = synthesize(
+    forms = synthesize_json(
         prompt=prompt,
         provider=used_provider,
         model=used_model,
         system=_compile_system_prompt(),
+        json_schema=TLDR_SCHEMA,
     )
+    composed = forms["body"]
+    tldr_short = forms["tldr_short"]
+    tldr_one_line = forms["tldr_one_line"]
 
     # 4b. Output sanity. Empty = hard fail (better to keep the old row
-    # than cache a blank page). Excessive length = soft warn.
+    # than cache a blank page). Excessive length = soft warn. Applies to
+    # the body; the two TLDRs are short by definition so we don't gate
+    # them with the same length thresholds.
     _validate_synthesize_output(composed, profile, topic_key)
 
-    # 5. Embed the composed summary + atomic upsert.
+    # 5. Embed the composed summary + atomic upsert. The embedding is over
+    # the body so wiki_topic_search retains v0.12 retrieval semantics --
+    # the TLDR forms are stored alongside but never embedded separately.
     embedding = generate_embedding(composed)
     summary = upsert_summary(
         profile=profile,
@@ -129,6 +176,8 @@ def recompute_topic_summary(
         embedding=embedding,
         source_memory_ids=source_ids,
         model_used=f"{used_provider}/{used_model}",
+        tldr_short=tldr_short,
+        tldr_one_line=tldr_one_line,
     )
     return {
         "action": "recomputed",

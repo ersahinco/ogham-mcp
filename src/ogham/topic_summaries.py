@@ -48,8 +48,17 @@ def upsert_summary(
     model_used: str,
     token_count: int | None = None,
     importance: float = 0.5,
+    tldr_one_line: str | None = None,
+    tldr_short: str | None = None,
 ) -> dict[str, Any]:
-    """Insert or refresh a topic summary atomically (server-side CTE)."""
+    """Insert or refresh a topic summary atomically (server-side CTE).
+
+    `tldr_one_line` and `tldr_short` are the v0.13 progressive-recall
+    multi-resolution forms (one sentence / one paragraph) generated in
+    the same LLM call as `content`. Both default to None for back-compat
+    with callers that haven't been updated; pre-033 schemas tolerate
+    NULL on those columns.
+    """
     return get_backend().wiki_topic_upsert(
         profile=profile,
         topic_key=topic_key,
@@ -61,6 +70,8 @@ def upsert_summary(
         source_hash=compute_source_hash(source_memory_ids),
         token_count=token_count,
         importance=importance,
+        tldr_one_line=tldr_one_line,
+        tldr_short=tldr_short,
     )
 
 

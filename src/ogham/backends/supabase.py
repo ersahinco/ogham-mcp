@@ -536,9 +536,14 @@ class SupabaseBackend:
         source_hash: bytes,
         token_count: int | None = None,
         importance: float = 0.5,
+        tldr_one_line: str | None = None,
+        tldr_short: str | None = None,
     ) -> dict[str, Any]:
         # PostgREST returns bytea as a hex string by default; the migration's
         # function takes bytea. Pass as hex-encoded \x-prefixed string.
+        # Migration 033 added p_tldr_one_line + p_tldr_short with DEFAULT NULL
+        # at the tail of the signature; pre-033 deployments tolerate the new
+        # named params being unset.
         params: dict[str, Any] = {
             "p_profile": profile,
             "p_topic_key": topic_key,
@@ -550,6 +555,8 @@ class SupabaseBackend:
             "p_source_hash": "\\x" + source_hash.hex(),
             "p_token_count": token_count,
             "p_importance": importance,
+            "p_tldr_one_line": tldr_one_line,
+            "p_tldr_short": tldr_short,
         }
         result = self._get_client().rpc("wiki_topic_upsert", params).execute()
         # Function returns a single row (RETURNS topic_summaries).

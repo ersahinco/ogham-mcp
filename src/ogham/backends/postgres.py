@@ -103,11 +103,16 @@ class PostgresBackend:
         if self._pool is None:
             if not settings.database_url:
                 raise RuntimeError("DATABASE_URL is required for PostgresBackend")
+            # open=True is the current implicit default in psycopg-pool, but
+            # the library has flagged that it will flip to False. Setting it
+            # explicitly silences the DeprecationWarning and pins behaviour
+            # across versions.
             self._pool = ConnectionPool(
                 conninfo=settings.database_url,
                 min_size=int(os.environ.get("OGHAM_POOL_MIN", "1")),
                 max_size=int(os.environ.get("OGHAM_POOL_MAX", "5")),
                 kwargs={"row_factory": dict_row},
+                open=True,
             )
             self._ensure_columns()
         return self._pool
@@ -957,13 +962,20 @@ class PostgresBackend:
         source_hash: bytes,
         token_count: int | None = None,
         importance: float = 0.5,
+        tldr_one_line: str | None = None,
+        tldr_short: str | None = None,
     ) -> dict[str, Any]:
+        # Migration 033 grew the wiki_topic_upsert RPC from 10 to 12 params,
+        # adding tldr_one_line and tldr_short as the v0.13 progressive-recall
+        # multi-resolution forms. Both default NULL on the function side, so
+        # callers that still pass 10 args keep working until they update.
         row = self._execute(
             "SELECT * FROM wiki_topic_upsert("
             "  %(profile)s, %(topic_key)s, %(content)s, %(embedding)s::vector,"
             "  %(memory_ids)s::uuid[], %(model_used)s,"
             "  %(source_cursor)s::uuid, %(source_hash)s,"
-            "  %(token_count)s, %(importance)s"
+            "  %(token_count)s, %(importance)s,"
+            "  %(tldr_one_line)s, %(tldr_short)s"
             ")",
             {
                 "profile": profile,
@@ -976,6 +988,8 @@ class PostgresBackend:
                 "source_hash": source_hash,
                 "token_count": token_count,
                 "importance": importance,
+                "tldr_one_line": tldr_one_line,
+                "tldr_short": tldr_short,
             },
             fetch="one",
         )

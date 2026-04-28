@@ -1,10 +1,15 @@
 """Phase 4 tests for src/ogham/recompute.py — topic-summary recompute
 orchestrator.
 
-Mocks llm.synthesize and embeddings.generate_embedding so no real
+Mocks llm.synthesize_json and embeddings.generate_embedding so no real
 network / embedding provider is hit. Exercises the three canonical
 outcomes: hash-match short-circuit, full recompile, and LLM-failure
 leaves-existing-row-intact (Letta #3270 guard).
+
+v0.13 update: synthesize() was replaced by synthesize_json() returning
+all three forms (body / tldr_short / tldr_one_line) in a single call.
+The mocks below return dicts with all three keys so the recompute path
+can populate the migration-033 tldr_* columns alongside content.
 """
 
 from __future__ import annotations
@@ -15,16 +20,22 @@ from unittest.mock import patch
 
 import pytest
 
-MIG_025 = Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-MIG_026 = Path(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
-MIG_028 = Path(__file__).parent.parent / "src/ogham/sql/migrations/028_topic_summaries.sql"
-MIG_030 = (
-    Path(__file__).parent.parent / "src/ogham/sql/migrations/030_topic_summaries_dim_agnostic.sql"
-)
-MIG_031 = Path(__file__).parent.parent / "src/ogham/sql/migrations/031_wiki_rpc_functions.sql"
+MIG_025 = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
+MIG_026 = Path(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
+MIG_028 = Path(__file__).parent.parent / "sql/migrations/028_topic_summaries.sql"
+MIG_030 = Path(__file__).parent.parent / "sql/migrations/030_topic_summaries_dim_agnostic.sql"
+MIG_031 = Path(__file__).parent.parent / "sql/migrations/031_wiki_rpc_functions.sql"
+MIG_033 = Path(__file__).parent.parent / "sql/migrations/033_topic_summaries_tldr.sql"
 ROLLBACK_028 = (
-    Path(__file__).parent.parent / "src/ogham/sql/migrations/DANGER_028_topic_summaries.sql"
+    Path(__file__).parent.parent / "sql/migrations/rollback/DANGER_028_topic_summaries.sql"
 )
+
+
+def _three_forms(
+    body: str, *, short: str = "tldr short paragraph", one_line: str = "tldr one line."
+) -> dict[str, str]:
+    """Helper: build a 3-form dict matching the synthesize_json schema."""
+    return {"body": body, "tldr_short": short, "tldr_one_line": one_line}
 
 
 def _can_connect() -> bool:
@@ -55,6 +66,10 @@ def _apply_028(pg_fresh_db):
     pg_fresh_db.apply_sql(MIG_028)
     pg_fresh_db.apply_sql(MIG_030)
     pg_fresh_db.apply_sql(MIG_031)
+    # Migration 033 grew wiki_topic_upsert's signature with two new optional
+    # params (p_tldr_one_line, p_tldr_short). The Python backend always
+    # sends them (NULL is fine), so the RPC must exist at the new arity.
+    pg_fresh_db.apply_sql(MIG_033)
 
 
 def _seed_memories_with_tag(
@@ -94,7 +109,10 @@ def test_recompute_first_time_writes_fresh_row(pg_fresh_db):
     from ogham.topic_summaries import get_summary_by_topic
 
     with (
-        patch("ogham.recompute.synthesize", return_value="composed wiki page body"),
+        patch(
+            "ogham.recompute.synthesize_json",
+            return_value=_three_forms("composed wiki page body"),
+        ),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         out = recompute_topic_summary(
@@ -112,6 +130,9 @@ def test_recompute_first_time_writes_fresh_row(pg_fresh_db):
     assert row["status"] == "fresh"
     assert row["version"] == 1
     assert row["model_used"] == "openai/gpt-4o-mini"
+    # v0.13: TLDR forms persisted alongside body.
+    assert row["tldr_short"] == "tldr short paragraph"
+    assert row["tldr_one_line"] == "tldr one line."
 
 
 def test_recompute_skips_when_source_hash_matches(pg_fresh_db):
@@ -123,7 +144,7 @@ def test_recompute_skips_when_source_hash_matches(pg_fresh_db):
 
     # First recompute populates the cache.
     with (
-        patch("ogham.recompute.synthesize", return_value="v1") as syn1,
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("v1")) as syn1,
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         recompute_topic_summary(
@@ -131,9 +152,12 @@ def test_recompute_skips_when_source_hash_matches(pg_fresh_db):
         )
     assert syn1.call_count == 1
 
-    # Second call on the same sources must NOT invoke synthesize.
+    # Second call on the same sources must NOT invoke synthesize_json.
     with (
-        patch("ogham.recompute.synthesize", return_value="SHOULD_NOT_RUN") as syn2,
+        patch(
+            "ogham.recompute.synthesize_json",
+            return_value=_three_forms("SHOULD_NOT_RUN"),
+        ) as syn2,
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512) as emb2,
     ):
         out = recompute_topic_summary(
@@ -155,7 +179,7 @@ def test_recompute_triggers_on_source_change(pg_fresh_db):
     from ogham.topic_summaries import get_summary_by_topic
 
     with (
-        patch("ogham.recompute.synthesize", return_value="v1"),
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("v1")),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         recompute_topic_summary(
@@ -169,7 +193,7 @@ def test_recompute_triggers_on_source_change(pg_fresh_db):
     _seed_memories_with_tag(1, tag="quantum")
 
     with (
-        patch("ogham.recompute.synthesize", return_value="v2") as syn,
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("v2")) as syn,
         patch("ogham.recompute.generate_embedding", return_value=[0.2] * 512),
     ):
         out = recompute_topic_summary(
@@ -199,7 +223,7 @@ def test_recompute_failure_leaves_existing_row_untouched(pg_fresh_db):
 
     # Seed a v1 first.
     with (
-        patch("ogham.recompute.synthesize", return_value="v1_good"),
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("v1_good")),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         recompute_topic_summary(
@@ -213,7 +237,7 @@ def test_recompute_failure_leaves_existing_row_untouched(pg_fresh_db):
 
     # Synthesize fails. Expectation: exception propagates, DB unchanged.
     with (
-        patch("ogham.recompute.synthesize", side_effect=RuntimeError("model down")),
+        patch("ogham.recompute.synthesize_json", side_effect=RuntimeError("model down")),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         with pytest.raises(RuntimeError, match="model down"):
@@ -279,7 +303,7 @@ def test_prompt_tokens_over_threshold_logs_warning(caplog, pg_fresh_db):
 
     with (
         caplog.at_level(logging.WARNING),
-        patch("ogham.recompute.synthesize", return_value="body"),
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("body")),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         recompute_topic_summary(
@@ -303,7 +327,7 @@ def test_empty_synthesize_output_raises(pg_fresh_db):
     from ogham.recompute import recompute_topic_summary
 
     with (
-        patch("ogham.recompute.synthesize", return_value="   "),
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("   ")),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         with pytest.raises(ValueError, match="empty"):
@@ -330,7 +354,7 @@ def test_oversized_synthesize_output_logs_warning(caplog, pg_fresh_db):
 
     with (
         caplog.at_level(logging.WARNING),
-        patch("ogham.recompute.synthesize", return_value=huge),
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms(huge)),
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         out = recompute_topic_summary(
@@ -378,13 +402,13 @@ def test_recompute_uses_settings_provider_when_not_passed(monkeypatch, pg_fresh_
     from ogham.recompute import recompute_topic_summary
 
     with (
-        patch("ogham.recompute.synthesize", return_value="body") as syn,
+        patch("ogham.recompute.synthesize_json", return_value=_three_forms("body")) as syn,
         patch("ogham.recompute.generate_embedding", return_value=[0.1] * 512),
     ):
         out = recompute_topic_summary(profile="test-025", topic_key="defaults")
 
     assert out["action"] == "recomputed"
-    # synthesize was called with the settings values.
+    # synthesize_json was called with the settings values.
     call_kwargs = syn.call_args.kwargs
     assert call_kwargs["provider"] == "anthropic"
     assert call_kwargs["model"] == "claude-haiku-4-5"

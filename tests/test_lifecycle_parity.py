@@ -79,8 +79,8 @@ def test_post_migration_parity(pg_fresh_db, pg_test_profile):
     """
     from pathlib import Path as _P
 
-    mig_025 = _P(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-    mig_026 = _P(__file__).parent.parent / "src/ogham/sql/migrations/026_memory_lifecycle_split.sql"
+    mig_025 = _P(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
+    mig_026 = _P(__file__).parent.parent / "sql/migrations/026_memory_lifecycle_split.sql"
     pg_fresh_db.apply_sql(mig_025)
     pg_fresh_db.apply_sql(mig_026)
 

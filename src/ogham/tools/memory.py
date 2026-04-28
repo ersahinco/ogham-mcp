@@ -501,6 +501,7 @@ def hybrid_search(
     graph_depth: int = 0,
     profiles: ListStr = None,
     extract_facts: bool = False,
+    wiki_preamble_level: str = "short",
 ) -> dict[str, Any]:
     """Search memories in the active profile by meaning and keywords (hybrid search).
 
@@ -528,6 +529,11 @@ def hybrid_search(
                   memories. Requires OGHAM_EXTRACT_PROVIDER and API key.
                   Default: False (returns verbatim memories). Bypasses wiki
                   injection entirely so the extractor sees raw memories only.
+        wiki_preamble_level: Resolution form for wiki preamble injection (v0.13
+                  progressive recall). 'short' (default, ~150-300 tokens per
+                  summary), 'one_line' (~30-50 tokens), or 'body' (~1000-2000
+                  tokens, the v0.12 default). Use 'body' for benchmark parity
+                  with v0.12 runs; 'short' is the typical-cost default.
     """
     _require_limit(limit)
     from ogham.embeddings import generate_embedding
@@ -548,7 +554,7 @@ def hybrid_search(
     wiki_preamble: list[dict[str, Any]] = []
     if not extract_facts and getattr(settings, "wiki_injection_enabled", False):
         embedding = generate_embedding(query)
-        wiki_preamble = _wiki_injection_results(profile, embedding)
+        wiki_preamble = _wiki_injection_results(profile, embedding, level=wiki_preamble_level)
 
     return {"results": results, "wiki_preamble": wiki_preamble}
 

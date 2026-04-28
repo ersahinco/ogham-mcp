@@ -4,19 +4,18 @@ Defends against the v0.9.2 regression class: a stray or misnumbered migration
 file sorting after the canonical RRF fix and silently overwriting it. See
 CHANGELOG [0.9.2] for the full incident write-up.
 
-Also enforces dual-tree parity: every file in ``src/ogham/sql/migrations/``
-(the package-bundled tree that test fixtures load) must be byte-identical to
-its counterpart in ``sql/migrations/`` (the canonical tree that ``upgrade.sh``
-applies). Closes the v0.12-era hazard where a fix to one tree silently
-diverged from the other.
+Also enforces a positive scope guard after Phase B (v0.13): the duplicate
+``src/ogham/sql/`` tree must NOT exist. Phase A's hash-parity gate was the
+temporary fix; Phase B (this commit) deleted the duplicate tree entirely.
+The wheel ships migrations from canonical ``sql/migrations/`` via hatchling
+``force-include``. The scope guard below prevents the duplicate from being
+silently re-introduced by a careless commit or a mis-typed Makefile rsync.
 """
 
-import hashlib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = REPO_ROOT / "sql" / "migrations"
-PACKAGE_MIGRATIONS_DIR = REPO_ROOT / "src" / "ogham" / "sql" / "migrations"
 ROLLBACK_DIR = MIGRATIONS_DIR / "rollback"
 
 
@@ -95,10 +94,6 @@ def test_update_search_function_sql_does_not_exist():
     )
 
 
-def _hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def test_danger_rollback_guards_live_inside_transaction():
     """Every DANGER_*.sql rollback must put its session-variable guard
     AFTER the first ``BEGIN;`` statement, not before.
@@ -143,54 +138,18 @@ def test_danger_rollback_guards_live_inside_transaction():
     assert not offenders, "DANGER rollback guard placement issue:\n  " + "\n  ".join(offenders)
 
 
-def test_dual_tree_parity():
-    """Every file in src/ogham/sql/migrations/ must hash-match its canonical twin.
+def test_no_duplicate_sql_tree_under_src():
+    """After Phase B (v0.13), src/ogham/sql/ must NOT exist.
 
-    Two trees of migrations exist in the repo:
-      * ``sql/migrations/``                   -- canonical, what ``upgrade.sh`` reads
-      * ``src/ogham/sql/migrations/``         -- bundled in the wheel, what tests load
-
-    Forward migrations (NN_*.sql) live at the top level of both. Rollback
-    migrations (DANGER_NN_*.sql) live inline in the package tree but in a
-    ``rollback/`` subdir of canonical. We resolve both layouts here.
-
-    A v0.12-era release shipped with these trees silently drifted -- a fix
-    applied to one was missed in the other. This guard makes that class of
-    drift impossible to merge.
+    Phase A added a hash-parity gate between sql/migrations/ and
+    src/ogham/sql/migrations/. Phase B deleted the duplicate tree
+    entirely. This test prevents the duplicate from being silently
+    re-introduced by a careless commit or mis-typed Makefile rsync rule.
     """
-    if not PACKAGE_MIGRATIONS_DIR.is_dir():
-        return  # package tree absent -- nothing to compare (Phase B has landed)
-
-    drift = []
-    missing = []
-    for pkg_file in sorted(PACKAGE_MIGRATIONS_DIR.glob("*.sql")):
-        if pkg_file.name.startswith("DANGER_"):
-            canonical = ROLLBACK_DIR / pkg_file.name
-        else:
-            canonical = MIGRATIONS_DIR / pkg_file.name
-
-        if not canonical.exists():
-            missing.append(f"{pkg_file.name} (expected at {canonical.relative_to(REPO_ROOT)})")
-            continue
-
-        if _hash(pkg_file) != _hash(canonical):
-            drift.append(
-                f"  {pkg_file.relative_to(REPO_ROOT)}\n"
-                f"    vs {canonical.relative_to(REPO_ROOT)}\n"
-                f"    -> sha256 mismatch"
-            )
-
-    if missing:
-        raise AssertionError(
-            "Package-tree migrations missing canonical twin in sql/migrations/:\n  "
-            + "\n  ".join(missing)
-            + "\n\nReconcile by copying the canonical version, or remove the orphan."
-        )
-    if drift:
-        raise AssertionError(
-            "Dual-tree migration drift detected -- canonical and package trees disagree:\n"
-            + "\n".join(drift)
-            + "\n\nFix: copy the canonical sql/migrations/<file>.sql over the package "
-            "src/ogham/sql/migrations/<file>.sql so they hash-match. The canonical "
-            "tree is the source of truth."
-        )
+    duplicate = REPO_ROOT / "src" / "ogham" / "sql"
+    assert not duplicate.exists(), (
+        f"Duplicate SQL tree found at {duplicate.relative_to(REPO_ROOT)}. "
+        f"After Phase B (v0.13), migrations live ONLY at sql/migrations/. "
+        f"The wheel ships them via hatchling force-include in pyproject.toml. "
+        f"Either delete the new tree or check why it was re-introduced."
+    )

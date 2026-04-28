@@ -8,13 +8,14 @@ populates are the same rows -- no shadow paths, no drift.
 `query_topic_summary` is the cheap read-only fetch: returns whatever the
 cache already holds for a topic, no LLM call, no recompute. Used by the
 dashboard Wiki tab and by any caller that only wants what's already
-synthesized.
+synthesized. v0.13 added a `level` parameter so callers can request the
+short paragraph or one-line form instead of the full body.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from ogham.app import mcp
 from ogham.config import settings
@@ -24,6 +25,15 @@ from ogham.recompute import recompute_topic_summary
 from ogham.tools.memory import get_active_profile
 from ogham.topic_summaries import get_summary_by_topic
 from ogham.wiki_lint import lint_report
+
+# v0.13: progressive-recall resolution levels. The default `body` preserves
+# v0.12 behaviour; `short` and `one_line` target tighter context budgets.
+LevelType = Literal["body", "short", "one_line"]
+_LEVEL_TO_COLUMN: dict[str, str] = {
+    "body": "content",
+    "short": "tldr_short",
+    "one_line": "tldr_one_line",
+}
 
 
 def _wiki_message(key: str, **fields: Any) -> str:
@@ -35,7 +45,11 @@ def _wiki_message(key: str, **fields: Any) -> str:
 logger = logging.getLogger(__name__)
 
 
-def _format_summary_response(summary: dict[str, Any]) -> dict[str, Any]:
+def _format_summary_response(
+    summary: dict[str, Any],
+    *,
+    level: LevelType = "body",
+) -> dict[str, Any]:
     """Shape a topic_summaries row for MCP return.
 
     Stamps the markdown content with a YAML frontmatter block so callers
@@ -43,6 +57,10 @@ def _format_summary_response(summary: dict[str, Any]) -> dict[str, Any]:
     second round-trip. Frontmatter is at the top of the markdown body
     rather than in a sibling field because most readers (Obsidian,
     static-site generators, plain `cat`) treat it as part of the page.
+
+    v0.13: `level` selects which content column populates `markdown`.
+    Falls back to body when the requested column is NULL on the row
+    (pre-033 schemas, or rows that failed three-form generation).
     """
     source_hash = summary.get("source_hash")
     if isinstance(source_hash, (bytes, bytearray, memoryview)):
@@ -52,6 +70,20 @@ def _format_summary_response(summary: dict[str, Any]) -> dict[str, Any]:
         source_hash_hex = source_hash.removeprefix("\\x") or None
     else:
         source_hash_hex = None
+
+    column = _LEVEL_TO_COLUMN[level]
+    body_text = summary.get(column)
+    served_level: LevelType = level
+    fallback_reason: str | None = None
+    if not body_text and level != "body":
+        # Pre-033 rows have NULL TLDR fields; fall back to body so callers
+        # always get *something* readable rather than a blank page.
+        body_text = summary.get("content") or ""
+        served_level = "body"
+        fallback_reason = f"{column} is null on this row"
+
+    if body_text is None:
+        body_text = ""
 
     frontmatter_lines = [
         "---",
@@ -63,16 +95,16 @@ def _format_summary_response(summary: dict[str, Any]) -> dict[str, Any]:
         f"source_count: {summary['source_count']}",
         f"model_used: {summary['model_used']}",
         f"updated_at: {summary['updated_at']}",
+        f"level: {served_level}",
     ]
     if source_hash_hex:
         frontmatter_lines.append(f"source_hash: {source_hash_hex}")
     frontmatter_lines.append("---")
     frontmatter = "\n".join(frontmatter_lines)
 
-    body = summary.get("content") or ""
-    stamped = f"{frontmatter}\n\n{body}"
+    stamped = f"{frontmatter}\n\n{body_text}"
 
-    return {
+    response: dict[str, Any] = {
         "id": str(summary["id"]),
         "topic_key": summary["topic_key"],
         "profile": summary["profile_id"],
@@ -83,7 +115,13 @@ def _format_summary_response(summary: dict[str, Any]) -> dict[str, Any]:
         "updated_at": str(summary["updated_at"]),
         "source_hash": source_hash_hex,
         "markdown": stamped,
+        "content": body_text,
+        "level": served_level,
     }
+    if fallback_reason is not None:
+        response["requested_level"] = level
+        response["fallback_reason"] = fallback_reason
+    return response
 
 
 @mcp.tool
@@ -252,7 +290,7 @@ def walk_knowledge(
 
 
 @mcp.tool
-def query_topic_summary(topic: str) -> dict[str, Any]:
+def query_topic_summary(topic: str, level: LevelType = "body") -> dict[str, Any]:
     """Fetch the cached topic summary without triggering recompute.
 
     Cheap read-only path -- returns whatever is in `topic_summaries`
@@ -261,11 +299,24 @@ def query_topic_summary(topic: str) -> dict[str, Any]:
 
     Args:
         topic: Tag string for the topic.
+        level: Resolution level (v0.13 progressive recall):
+            - 'body' (default, ~1000-2000 tokens): full markdown body.
+              Preserves v0.12 behaviour for callers that don't pass
+              the parameter.
+            - 'short' (~150-300 tokens): one-paragraph TLDR. The cheap
+              context-preamble form.
+            - 'one_line' (~30-50 tokens): single-sentence glanceable form.
+            If the requested level is NULL on the row (pre-033 rows or
+            ones that failed three-form generation), the response falls
+            back to body and reports `requested_level` + `fallback_reason`.
 
     Returns:
         Dict with the cached markdown + provenance, or
-        `{"status": "not_cached", ...}` if no summary exists yet.
+        `{"status": "not_cached", ...}` if no summary exists yet. The
+        `level` field reports which form actually populated `content`.
     """
+    if level not in _LEVEL_TO_COLUMN:
+        raise ValueError(f"unknown level {level!r}; expected one of {sorted(_LEVEL_TO_COLUMN)}")
     profile = get_active_profile()
     summary = get_summary_by_topic(profile, topic)
     if summary is None:
@@ -275,7 +326,7 @@ def query_topic_summary(topic: str) -> dict[str, Any]:
             "profile": profile,
             "message": _wiki_message("not_cached", topic=topic, profile=profile),
         }
-    return _format_summary_response(summary)
+    return _format_summary_response(summary, level=level)
 
 
 @mcp.tool

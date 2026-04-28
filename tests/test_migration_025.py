@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-MIG = Path(__file__).parent.parent / "src/ogham/sql/migrations/025_memory_lifecycle.sql"
-ROLLBACK = Path(__file__).parent.parent / "src/ogham/sql/migrations/DANGER_025_memory_lifecycle.sql"
+MIG = Path(__file__).parent.parent / "sql/migrations/025_memory_lifecycle.sql"
+ROLLBACK = Path(__file__).parent.parent / "sql/migrations/rollback/DANGER_025_memory_lifecycle.sql"
 
 
 def _can_connect() -> bool:
