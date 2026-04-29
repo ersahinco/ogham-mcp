@@ -4,6 +4,91 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.1] - 2026-04-29 -- Smart hook capture + Supabase background-task fix
+
+Patch release. The headline is smart inscribe extraction (#43, thanks
+@ersahinco) -- inscribe hooks now record what was learned, changed,
+decided, created, corrected, or failed instead of generic tool
+activity. Plus a fix for six call sites that have been silently failing
+on Supabase deployments since v0.11.
+
+### New: smart inscribe hooks (#43)
+
+`Edit` and `Write` events are no longer blanket-skipped. Response-gated
+extraction captures meaningful diffs, signature changes, and new-file
+docstring summaries; skips typo-only edits and ambiguous overwrites.
+
+`Bash` capture upgraded for `git commit -m`, publish/deploy/release
+outcomes, and `gh pr/issue/release` parsing.
+
+`UserPromptSubmit` capture added for preferences, decisions, dated
+facts, corrections, and personal/work context.
+
+New: `ogham hooks inscribe --dry-run` previews what would be stored
+without writing or mutating dedup state.
+
+All extraction is heuristic -- no LLM calls, no embedding calls, hook
+latency unchanged.
+
+### Fixed: Supabase parity for lifecycle, graph, density, and suggestions
+
+Six call sites outside `backends/` were calling internal `_execute`
+(a Postgres-only API) directly. `SupabaseBackend` doesn't have it, so
+all six raised `AttributeError` on Supabase deployments since v0.11 --
+swallowed silently in fire-and-forget background tasks (lifecycle,
+Hebbian edges) and in caller-side `try/except` (density, hidden-link
+suggestions). The user-visible symptom: the `suggest_connections` MCP
+tool returned `[]` to every Supabase user, and the Lifecycle pipeline
+counts on the dashboard were wrong.
+
+Fix: published the operations as RPC functions via migration 035, and
+routed all six call sites through the public backend facade methods.
+Postgres deployments keep their fast inline-SQL path; Supabase
+deployments now go through PostgREST RPC with the same SQL semantics.
+
+If you've been running on Supabase, expect a one-time burst of
+fresh→stable lifecycle transitions on the next search call -- that's
+the backlog catching up.
+
+### Fixed: build-system
+
+- `make tag` now fails fast if `git commit --allow-empty` doesn't move
+  HEAD. v0.13.0 shipped pointing at v0.12.1 code because a pre-commit
+  hook silently aborted the empty commit; the release recipe kept
+  going and tagged the wrong HEAD. Caught after PyPI publish and
+  fixed forward.
+- `demo-scripts/` no longer leaks into the sdist tarball.
+- `make sync` SYNC_SOURCES list now includes `lifecycle.py`, `graph.py`,
+  `tools/memory.py`, all test files, `docs/internals/hooks.md`, and
+  globs migrations + rollbacks. Closes the v0.9.2 / v0.13.0 sync-gap
+  class of bugs.
+- `make publish-check` now audits sdist file count (100-400 expected)
+  and forbidden paths (docs/, benchmarks/, .claude/, .github/,
+  demo-scripts/, rollbacks, .env*, DANGER_*.sql). Catches bloat before
+  it reaches PyPI.
+- `make publish` now depends on `make smoke`, which installs the built
+  wheel into a fresh venv and validates 13 module imports + the CLI
+  entrypoint.
+
+### Migration
+
+Apply via Supabase SQL Editor (or `psql` for self-hosters):
+
+```sql
+\i sql/migrations/035_lifecycle_graph_rpcs.sql
+```
+
+Idempotent (`CREATE OR REPLACE FUNCTION` only; no data changes; no
+table modifications). The migration tolerates missing
+`memory_entities`/`entities` tables gracefully -- the entity-density
+and hidden-link functions return empty results until those tables
+exist (older deployments that predate the v0.10 entities feature).
+
+**Install:** `uv tool install ogham-mcp` or
+`pip install ogham-mcp==0.13.1`
+
+**Full changelog:** https://github.com/ogham-mcp/ogham-mcp/compare/v0.13.0...v0.13.1
+
 ## [0.13.0] - 2026-04-28 -- Progressive recall
 
 Multi-resolution topic summaries, an 8-dimension health readout, Go CLI

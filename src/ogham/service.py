@@ -1787,18 +1787,11 @@ def _profile_graph_density(profile: str) -> float:
     try:
         from ogham.database import get_backend
 
-        backend = cast(Any, get_backend())
-        rows = backend._execute(
-            """SELECT
-                 count(distinct entity_id)::float as entities,
-                 count(*)::float as edges
-               FROM memory_entities
-               WHERE profile = %(profile)s""",
-            {"profile": profile},
-            fetch="one",
-        )
-        if rows and rows.get("entities", 0) > 0:
-            density = float(rows["edges"]) / float(rows["entities"])
+        # v0.13.1: route through facade so Supabase works (was raising
+        # AttributeError on _execute and silently degrading to 2.0).
+        entities, edges = get_backend().entity_graph_density(profile)
+        if entities > 0:
+            density = edges / entities
         else:
             density = 2.0
     except Exception:

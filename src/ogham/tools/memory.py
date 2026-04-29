@@ -990,62 +990,18 @@ def suggest_connections(
     """
     from ogham.database import get_backend
 
-    backend = cast(Any, get_backend())
+    # v0.13.1: route through facade so Supabase works (was raising
+    # AttributeError on _execute and silently returning [] to users).
     try:
-        rows = backend._execute(
-            """
-            WITH target_entities AS (
-                SELECT entity_id FROM memory_entities
-                WHERE memory_id = %(memory_id)s::uuid
-            ),
-            shared AS (
-                SELECT
-                    me.memory_id,
-                    count(*) as shared_count,
-                    array_agg(e.entity_type || ':' || e.canonical_name) as shared_entities
-                FROM memory_entities me
-                JOIN target_entities te ON te.entity_id = me.entity_id
-                JOIN entities e ON e.id = me.entity_id
-                WHERE me.memory_id != %(memory_id)s::uuid
-                  AND me.profile = %(profile)s
-                GROUP BY me.memory_id
-                HAVING count(*) >= %(min_shared)s
-            ),
-            unlinked AS (
-                SELECT s.*
-                FROM shared s
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM memory_relationships mr
-                    WHERE (mr.source_id = %(memory_id)s::uuid AND mr.target_id = s.memory_id)
-                       OR (mr.target_id = %(memory_id)s::uuid AND mr.source_id = s.memory_id)
-                )
-            )
-            SELECT
-                u.memory_id::text as id,
-                u.shared_count,
-                u.shared_entities,
-                m.content,
-                m.created_at,
-                m.tags
-            FROM unlinked u
-            JOIN memories m ON m.id = u.memory_id
-            WHERE m.expires_at IS NULL OR m.expires_at > now()
-            ORDER BY u.shared_count DESC, m.created_at DESC
-            LIMIT %(limit)s
-            """,
-            {
-                "memory_id": memory_id,
-                "profile": get_active_profile(),
-                "min_shared": min_shared_entities,
-                "limit": limit,
-            },
-            fetch="all",
+        return get_backend().suggest_unlinked_by_shared_entities(
+            memory_id=memory_id,
+            profile=get_active_profile(),
+            min_shared=min_shared_entities,
+            limit=limit,
         )
     except Exception as e:
         logger.debug("suggest_connections failed: %s", e)
         return []
-
-    return rows or []
 
 
 @mcp.tool

@@ -11,6 +11,12 @@ Stages:
 This module is the pure logic. Hooks integration lives in
 hooks.py (SessionStart wiring) and service.py (search-triggered window
 opens + co-retrieval Hebbian updates).
+
+v0.13.1: stage transitions now go through the backend facade
+(`lifecycle_advance_stages`, `lifecycle_close_editing_windows`, etc.)
+instead of `backend._execute(...)`. Postgres uses inline SQL via the
+facade; Supabase calls the matching RPC defined in migration 035. See
+the v0.13 health-dimensions refactor for the precedent.
 """
 
 from __future__ import annotations
@@ -18,7 +24,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol, cast
 
 from ogham.database import get_backend
 
@@ -26,16 +31,6 @@ DEFAULT_DWELL_HOURS = 1.0
 DEFAULT_SURPRISE_GATE = 0.3
 DEFAULT_IMPORTANCE_GATE = 0.5
 DEFAULT_EDITING_WINDOW_MINUTES = 30
-
-
-class _SqlExecutor(Protocol):
-    def _execute(
-        self,
-        query: str,
-        params: dict[str, Any] | None = None,
-        *,
-        fetch: str = "all",
-    ) -> Any: ...
 
 
 @dataclass
@@ -56,52 +51,27 @@ def advance_stages(profile: str) -> StageReport:
     HNSW index on memories is not disturbed. The gates still come from
     memories, via a PK join -- see migration 026 for the rationale.
     """
-    backend = cast(_SqlExecutor, get_backend())
+    backend = get_backend()
     report = StageReport()
 
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=DEFAULT_DWELL_HOURS)
-    result = backend._execute(
-        """UPDATE memory_lifecycle AS ml
-              SET stage = 'stable',
-                  stage_entered_at = now(),
-                  updated_at = now()
-             FROM memories AS m
-            WHERE ml.memory_id = m.id
-              AND ml.profile = %(profile)s
-              AND ml.stage = 'fresh'
-              AND ml.stage_entered_at <= %(cutoff)s
-              AND (m.surprise >= %(s_gate)s OR m.importance >= %(i_gate)s)
-            RETURNING ml.memory_id""",
-        {
-            "profile": profile,
-            "cutoff": cutoff,
-            "s_gate": DEFAULT_SURPRISE_GATE,
-            "i_gate": DEFAULT_IMPORTANCE_GATE,
-        },
-        fetch="all",
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(hours=DEFAULT_DWELL_HOURS)).isoformat()
+    report.fresh_to_stable = backend.lifecycle_advance_stages(
+        profile=profile,
+        cutoff_iso=cutoff,
+        surprise_gate=DEFAULT_SURPRISE_GATE,
+        importance_gate=DEFAULT_IMPORTANCE_GATE,
     )
-    report.fresh_to_stable = len(result) if result else 0
     report.editing_closed = close_editing_windows(profile)
     return report
 
 
 def close_editing_windows(profile: str) -> int:
     """Close EDITING windows older than DEFAULT_EDITING_WINDOW_MINUTES."""
-    backend = cast(_SqlExecutor, get_backend())
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=DEFAULT_EDITING_WINDOW_MINUTES)
-    result = backend._execute(
-        """UPDATE memory_lifecycle
-              SET stage = 'stable',
-                  stage_entered_at = now(),
-                  updated_at = now()
-            WHERE profile = %(profile)s
-              AND stage = 'editing'
-              AND stage_entered_at <= %(cutoff)s
-            RETURNING memory_id""",
-        {"profile": profile, "cutoff": cutoff},
-        fetch="all",
-    )
-    return len(result) if result else 0
+    backend = get_backend()
+    cutoff = (
+        datetime.now(tz=timezone.utc) - timedelta(minutes=DEFAULT_EDITING_WINDOW_MINUTES)
+    ).isoformat()
+    return backend.lifecycle_close_editing_windows(profile=profile, cutoff_iso=cutoff)
 
 
 def open_editing_window(memory_ids: list[str]) -> None:
@@ -114,34 +84,12 @@ def open_editing_window(memory_ids: list[str]) -> None:
     """
     if not memory_ids:
         return
-    backend = cast(_SqlExecutor, get_backend())
-    backend._execute(
-        """UPDATE memory_lifecycle
-              SET stage = 'editing',
-                  stage_entered_at = now(),
-                  updated_at = now()
-            WHERE memory_id = ANY(%(ids)s::uuid[])
-              AND stage = 'stable'""",
-        {"ids": memory_ids},
-        fetch="none",
-    )
+    get_backend().lifecycle_open_editing_window(memory_ids)
 
 
 def lifecycle_pipeline_counts(profile: str) -> dict[str, int]:
     """Return {stage: count} for the dashboard pipeline card."""
-    backend = cast(_SqlExecutor, get_backend())
-    rows = backend._execute(
-        """SELECT stage, count(*) AS n
-             FROM memory_lifecycle
-            WHERE profile = %(profile)s
-            GROUP BY stage""",
-        {"profile": profile},
-        fetch="all",
-    )
-    out = {"fresh": 0, "stable": 0, "editing": 0}
-    for row in rows or []:
-        out[row["stage"]] = row["n"]
-    return out
+    return get_backend().lifecycle_pipeline_counts(profile)
 
 
 def hybrid_decay_factor(

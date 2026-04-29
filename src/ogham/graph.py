@@ -25,22 +25,11 @@ parallel arrays), replacing the previous C(n, 2) per-pair ON CONFLICT loop.
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Any, Protocol, cast
 
 from ogham.database import get_backend
 
 HEBBIAN_RATE = 0.01
 BOOTSTRAP_STRENGTH = 0.1
-
-
-class _SqlExecutor(Protocol):
-    def _execute(
-        self,
-        query: str,
-        params: dict[str, Any] | None = None,
-        *,
-        fetch: str = "all",
-    ) -> Any: ...
 
 
 def strengthen_edges(memory_ids: list[str]) -> int:
@@ -51,6 +40,10 @@ def strengthen_edges(memory_ids: list[str]) -> int:
     single UNNEST-driven INSERT regardless of how many pairs are involved.
 
     Returns count of edges touched.
+
+    v0.13.1: dispatches through the backend facade
+    `hebbian_strengthen_edges`. Postgres keeps the inline UNNEST; Supabase
+    calls the matching RPC defined in migration 035.
     """
     if len(memory_ids) < 2:
         return 0
@@ -60,22 +53,9 @@ def strengthen_edges(memory_ids: list[str]) -> int:
     sources = [p[0] for p in pairs]
     targets = [p[1] for p in pairs]
 
-    backend = cast(_SqlExecutor, get_backend())
-    result = backend._execute(
-        """INSERT INTO memory_relationships
-               (source_id, target_id, relationship, strength, created_by)
-           SELECT s::uuid, t::uuid, 'related', %(bootstrap)s, 'hebbian'
-             FROM unnest(%(sources)s::text[], %(targets)s::text[]) AS p(s, t)
-           ON CONFLICT (source_id, target_id, relationship) DO UPDATE
-               SET strength = LEAST(1.0,
-                                    memory_relationships.strength * (1 + %(rate)s))
-           RETURNING source_id""",
-        {
-            "sources": sources,
-            "targets": targets,
-            "bootstrap": BOOTSTRAP_STRENGTH,
-            "rate": HEBBIAN_RATE,
-        },
-        fetch="all",
+    return get_backend().hebbian_strengthen_edges(
+        sources=sources,
+        targets=targets,
+        bootstrap=BOOTSTRAP_STRENGTH,
+        rate=HEBBIAN_RATE,
     )
-    return len(result) if result else 0

@@ -354,3 +354,44 @@ class GatewayBackend:
     def wiki_lint_stale_lifecycle(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         self._wiki_unsupported("wiki_lint_stale_lifecycle")
         return {"count": 0, "sample": []}
+
+    # ========================================================================
+    # Lifecycle / Graph / Density (v0.13.1 — migration 035 RPC parity)
+    # Same parking pattern as wiki: gateway path is dormant; self-hosted
+    # backends (postgres or supabase) are the supported substrates.
+    # ========================================================================
+
+    def _lifecycle_unsupported(self, op: str) -> None:
+        raise NotImplementedError(
+            f"GatewayBackend does not support lifecycle/graph op {op!r}. "
+            "Use DATABASE_BACKEND=postgres or DATABASE_BACKEND=supabase."
+        )
+
+    def lifecycle_advance_stages(self, *args: Any, **kwargs: Any) -> int:
+        self._lifecycle_unsupported("lifecycle_advance_stages")
+        return 0
+
+    def lifecycle_close_editing_windows(self, *args: Any, **kwargs: Any) -> int:
+        self._lifecycle_unsupported("lifecycle_close_editing_windows")
+        return 0
+
+    def lifecycle_open_editing_window(self, *args: Any, **kwargs: Any) -> None:
+        self._lifecycle_unsupported("lifecycle_open_editing_window")
+
+    def lifecycle_pipeline_counts(self, *args: Any, **kwargs: Any) -> dict[str, int]:
+        self._lifecycle_unsupported("lifecycle_pipeline_counts")
+        return {"fresh": 0, "stable": 0, "editing": 0}
+
+    def hebbian_strengthen_edges(self, *args: Any, **kwargs: Any) -> int:
+        self._lifecycle_unsupported("hebbian_strengthen_edges")
+        return 0
+
+    def entity_graph_density(self, *args: Any, **kwargs: Any) -> tuple[float, float]:
+        self._lifecycle_unsupported("entity_graph_density")
+        return (0.0, 0.0)
+
+    def suggest_unlinked_by_shared_entities(
+        self, *args: Any, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        self._lifecycle_unsupported("suggest_unlinked_by_shared_entities")
+        return []

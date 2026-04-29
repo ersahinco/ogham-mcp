@@ -438,6 +438,204 @@ class PostgresBackend:
         except Exception:
             return 0
 
+    # ── Lifecycle / Graph / Density (v0.13.1 — migration 035 parity) ──
+    #
+    # These facades publish to both backends what was previously called via
+    # `backend._execute(...)` from lifecycle.py / graph.py / service.py /
+    # tools/memory.py. Postgres can keep the SQL inline; Supabase calls the
+    # matching RPC defined in migration 035. Without these, six call sites
+    # raised AttributeError on Supabase since v0.11 (silently swallowed in
+    # background tasks or try/except blocks).
+
+    def lifecycle_advance_stages(
+        self,
+        profile: str,
+        cutoff_iso: str,
+        surprise_gate: float,
+        importance_gate: float,
+    ) -> int:
+        """Advance fresh→stable for memories past dwell + gate. Returns count."""
+        result = self._execute(
+            """WITH advanced AS (
+                 UPDATE memory_lifecycle AS ml
+                    SET stage            = 'stable',
+                        stage_entered_at = now(),
+                        updated_at       = now()
+                   FROM memories AS m
+                  WHERE ml.memory_id        = m.id
+                    AND ml.profile          = %(profile)s
+                    AND ml.stage            = 'fresh'
+                    AND ml.stage_entered_at <= %(cutoff)s
+                    AND (m.surprise >= %(s_gate)s OR m.importance >= %(i_gate)s)
+                  RETURNING ml.memory_id
+               )
+               SELECT count(*)::integer AS n FROM advanced""",
+            {
+                "profile": profile,
+                "cutoff": cutoff_iso,
+                "s_gate": surprise_gate,
+                "i_gate": importance_gate,
+            },
+            fetch="scalar",
+        )
+        return result or 0
+
+    def lifecycle_close_editing_windows(
+        self,
+        profile: str,
+        cutoff_iso: str,
+    ) -> int:
+        """Close stale editing windows. Returns count closed."""
+        result = self._execute(
+            """WITH closed AS (
+                 UPDATE memory_lifecycle
+                    SET stage            = 'stable',
+                        stage_entered_at = now(),
+                        updated_at       = now()
+                  WHERE profile           = %(profile)s
+                    AND stage             = 'editing'
+                    AND stage_entered_at <= %(cutoff)s
+                  RETURNING memory_id
+               )
+               SELECT count(*)::integer AS n FROM closed""",
+            {"profile": profile, "cutoff": cutoff_iso},
+            fetch="scalar",
+        )
+        return result or 0
+
+    def lifecycle_open_editing_window(self, memory_ids: list[str]) -> None:
+        """Flip stable→editing on the given IDs. No-op for empty list."""
+        if not memory_ids:
+            return
+        self._execute(
+            """UPDATE memory_lifecycle
+                  SET stage            = 'editing',
+                      stage_entered_at = now(),
+                      updated_at       = now()
+                WHERE memory_id = ANY(%(ids)s::uuid[])
+                  AND stage = 'stable'""",
+            {"ids": memory_ids},
+            fetch="none",
+        )
+
+    def lifecycle_pipeline_counts(self, profile: str) -> dict[str, int]:
+        """Return {stage: count} for the dashboard pipeline card."""
+        rows = self._execute(
+            """SELECT stage, count(*)::integer AS n
+                 FROM memory_lifecycle
+                WHERE profile = %(profile)s
+                GROUP BY stage""",
+            {"profile": profile},
+            fetch="all",
+        )
+        out = {"fresh": 0, "stable": 0, "editing": 0}
+        for row in rows or []:
+            out[row["stage"]] = row["n"]
+        return out
+
+    def hebbian_strengthen_edges(
+        self,
+        sources: list[str],
+        targets: list[str],
+        bootstrap: float,
+        rate: float,
+    ) -> int:
+        """UPSERT Hebbian co-retrieval edges. Returns count touched."""
+        if not sources:
+            return 0
+        result = self._execute(
+            """WITH touched AS (
+                 INSERT INTO memory_relationships
+                     (source_id, target_id, relationship, strength, created_by)
+                 SELECT s::uuid, t::uuid, 'related', %(bootstrap)s, 'hebbian'
+                   FROM unnest(%(sources)s::text[], %(targets)s::text[]) AS p(s, t)
+                 ON CONFLICT (source_id, target_id, relationship) DO UPDATE
+                     SET strength = LEAST(1.0,
+                                          memory_relationships.strength * (1 + %(rate)s))
+                 RETURNING source_id
+               )
+               SELECT count(*)::integer AS n FROM touched""",
+            {
+                "sources": sources,
+                "targets": targets,
+                "bootstrap": bootstrap,
+                "rate": rate,
+            },
+            fetch="scalar",
+        )
+        return result or 0
+
+    def entity_graph_density(self, profile: str) -> tuple[float, float]:
+        """Returns (entity_count, edge_count) for a profile."""
+        row = self._execute(
+            """SELECT
+                 count(DISTINCT entity_id)::float AS entities,
+                 count(*)::float                  AS edges
+               FROM memory_entities
+              WHERE profile = %(profile)s""",
+            {"profile": profile},
+            fetch="one",
+        )
+        if not row:
+            return (0.0, 0.0)
+        return (float(row.get("entities") or 0.0), float(row.get("edges") or 0.0))
+
+    def suggest_unlinked_by_shared_entities(
+        self,
+        memory_id: str,
+        profile: str,
+        min_shared: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Find memories that share entities but have no explicit relationship."""
+        rows = self._execute(
+            """WITH target_entities AS (
+                 SELECT entity_id FROM memory_entities
+                  WHERE memory_id = %(memory_id)s::uuid
+               ),
+               shared AS (
+                 SELECT
+                     me.memory_id,
+                     count(*) AS shared_count,
+                     array_agg(e.entity_type || ':' || e.canonical_name) AS shared_entities
+                   FROM memory_entities me
+                   JOIN target_entities te ON te.entity_id = me.entity_id
+                   JOIN entities e         ON e.id        = me.entity_id
+                  WHERE me.memory_id != %(memory_id)s::uuid
+                    AND me.profile    = %(profile)s
+                  GROUP BY me.memory_id
+                 HAVING count(*) >= %(min_shared)s
+               ),
+               unlinked AS (
+                 SELECT s.* FROM shared s
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM memory_relationships mr
+                       WHERE (mr.source_id = %(memory_id)s::uuid AND mr.target_id = s.memory_id)
+                          OR (mr.target_id = %(memory_id)s::uuid AND mr.source_id = s.memory_id)
+                  )
+               )
+               SELECT
+                   u.memory_id::text AS id,
+                   u.shared_count,
+                   u.shared_entities,
+                   m.content,
+                   m.created_at,
+                   m.tags
+                 FROM unlinked u
+                 JOIN memories m ON m.id = u.memory_id
+                WHERE m.expires_at IS NULL OR m.expires_at > now()
+                ORDER BY u.shared_count DESC, m.created_at DESC
+                LIMIT %(limit)s""",
+            {
+                "memory_id": memory_id,
+                "profile": profile,
+                "min_shared": min_shared,
+                "limit": limit,
+            },
+            fetch="all",
+        )
+        return rows or []
+
     # ── Audit ─────────────────────────────────────────────────────────
 
     def emit_audit_event(

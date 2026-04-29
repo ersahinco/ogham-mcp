@@ -725,3 +725,111 @@ class SupabaseBackend:
         result = self._get_client().rpc("wiki_lint_stale_lifecycle", params).execute()
         count, sample = self._split_count_sample(_rows(result.data))
         return {"count": count, "sample": sample, "older_than_days": older_than_days}
+
+    # ========================================================================
+    # Lifecycle / Graph / Density (v0.13.1 — migration 035 RPC parity)
+    #
+    # Six call sites outside backends/ used to call backend._execute(...)
+    # directly. SupabaseBackend has no _execute, so they raised
+    # AttributeError on every Supabase deployment since v0.11 -- swallowed
+    # silently in fire-and-forget bg tasks (lifecycle, graph) and in
+    # caller-side try/except (density, suggest_connections).
+    #
+    # The seven RPC functions in migration 035 expose the same operations
+    # via PostgREST. Each method below is a thin wrapper.
+    # ========================================================================
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def lifecycle_advance_stages(
+        self,
+        profile: str,
+        cutoff_iso: str,
+        surprise_gate: float,
+        importance_gate: float,
+    ) -> int:
+        params: dict[str, Any] = {
+            "p_profile": profile,
+            "p_cutoff": cutoff_iso,
+            "p_s_gate": surprise_gate,
+            "p_i_gate": importance_gate,
+        }
+        result = self._get_client().rpc("lifecycle_advance_fresh_to_stable", params).execute()
+        # PostgREST returns scalar RETURNS integer as a bare int in result.data.
+        return int(result.data) if isinstance(result.data, int | float | str) else 0
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def lifecycle_close_editing_windows(
+        self,
+        profile: str,
+        cutoff_iso: str,
+    ) -> int:
+        params: dict[str, Any] = {"p_profile": profile, "p_cutoff": cutoff_iso}
+        result = self._get_client().rpc("lifecycle_close_editing_windows", params).execute()
+        # PostgREST returns scalar RETURNS integer as a bare int in result.data.
+        return int(result.data) if isinstance(result.data, int | float | str) else 0
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def lifecycle_open_editing_window(self, memory_ids: list[str]) -> None:
+        if not memory_ids:
+            return
+        params: dict[str, Any] = {"p_ids": memory_ids}
+        self._get_client().rpc("lifecycle_open_editing_window", params).execute()
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def lifecycle_pipeline_counts(self, profile: str) -> dict[str, int]:
+        params: dict[str, Any] = {"p_profile": profile}
+        result = self._get_client().rpc("lifecycle_pipeline_counts", params).execute()
+        out = {"fresh": 0, "stable": 0, "editing": 0}
+        for row in _rows(result.data):
+            stage = row.get("stage")
+            n = row.get("n")
+            if stage in out and n is not None:
+                out[stage] = int(n)
+        return out
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def hebbian_strengthen_edges(
+        self,
+        sources: list[str],
+        targets: list[str],
+        bootstrap: float,
+        rate: float,
+    ) -> int:
+        if not sources:
+            return 0
+        params: dict[str, Any] = {
+            "p_sources": sources,
+            "p_targets": targets,
+            "p_bootstrap": bootstrap,
+            "p_rate": rate,
+        }
+        result = self._get_client().rpc("hebbian_strengthen_edges", params).execute()
+        # PostgREST returns scalar RETURNS integer as a bare int in result.data.
+        return int(result.data) if isinstance(result.data, int | float | str) else 0
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def entity_graph_density(self, profile: str) -> tuple[float, float]:
+        params: dict[str, Any] = {"p_profile": profile}
+        result = self._get_client().rpc("entity_graph_density", params).execute()
+        rows = _rows(result.data)
+        if not rows:
+            return (0.0, 0.0)
+        row = rows[0]
+        return (float(row.get("entities") or 0.0), float(row.get("edges") or 0.0))
+
+    @with_retry(max_attempts=2, base_delay=0.3)
+    def suggest_unlinked_by_shared_entities(
+        self,
+        memory_id: str,
+        profile: str,
+        min_shared: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "p_memory_id": memory_id,
+            "p_profile": profile,
+            "p_min_shared": min_shared,
+            "p_limit": limit,
+        }
+        result = self._get_client().rpc("suggest_unlinked_by_shared_entities", params).execute()
+        return _rows(result.data)

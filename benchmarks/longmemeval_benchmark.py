@@ -91,15 +91,89 @@ def load_dataset(variant: str = "S") -> list[dict]:
         return json.load(f)
 
 
+def _expected_memory_count(question: dict) -> int:
+    """Approximate round count the ingest would produce for this question.
+
+    Each session turn maps to one memory. A small tolerance is OK -- some
+    sessions have trailing assistant-only turns that get dropped. We use
+    this only to warn on profile pollution, not to force a count match.
+    """
+    total = 0
+    for session in question.get("haystack_sessions", []):
+        total += len(session) if isinstance(session, list) else 0
+    return total
+
+
+def _existing_profile_mem_map(backend, profile: str) -> dict[str, str]:
+    """Build memory_id -> session_id map from memories already in the profile.
+
+    Used when a previous run already ingested this profile so we can skip
+    re-embedding (expensive + hits Gemini / OpenAI rate limits for no gain).
+    Session IDs are stored verbatim as "session:<id>" tags on each memory.
+    """
+    try:
+        rows = backend.get_all_memories_full(profile)
+    except Exception as exc:
+        logger.debug("Could not read existing profile %s: %s", profile, exc)
+        return {}
+
+    mem_map: dict[str, str] = {}
+    for row in rows:
+        mem_id = row.get("id")
+        if not mem_id:
+            continue
+        for tag in row.get("tags") or []:
+            if isinstance(tag, str) and tag.startswith("session:"):
+                mem_map[str(mem_id)] = tag[len("session:") :]
+                break
+    return mem_map
+
+
 def ingest_question(question: dict, profile: str):
     """Ingest all sessions for a single question into Ogham.
 
     Uses batch embedding (up to 1000 at a time) for efficiency.
     Each session is decomposed into user-assistant round pairs.
     Temporal metadata is prepended to each round.
+
+    Idempotent: if the profile already has memories for this question, the
+    existing memory_id -> session_id map is returned and ingestion is skipped.
+    Skips any round where the embedding provider returned None (previously
+    serialised "None" into the SQL INSERT and broke the whole batch).
     """
     from ogham.database import get_backend
     from ogham.embeddings import generate_embeddings_batch
+
+    backend = get_backend()
+
+    # If --fresh was requested, wipe any prior state before checking
+    # idempotency so we get a genuinely clean run. Prior pollution from
+    # interrupted benchmarks otherwise silently inflates retrieval-count
+    # metrics (a question's profile ends up with 2x the intended memories,
+    # and gold sessions get outranked by duplicates).
+    if os.environ.get("OGHAM_LME_FRESH") == "1":
+        backend._execute(
+            "DELETE FROM memories WHERE profile = %(p)s",
+            {"p": profile},
+            fetch="none",
+        )
+
+    # Idempotency: if profile already populated, skip re-embed / re-insert.
+    # Warn (not fail) if the existing count differs from what this question
+    # expects -- pollution detection without forcing a re-ingest unless the
+    # operator opts in via --fresh.
+    existing_map = _existing_profile_mem_map(backend, profile)
+    if existing_map:
+        expected = _expected_memory_count(question)
+        if expected and abs(len(existing_map) - expected) > max(5, expected // 10):
+            logger.warning(
+                "profile %s has %d memories but question expects ~%d -- "
+                "rerun with --fresh to wipe and re-ingest",
+                profile,
+                len(existing_map),
+                expected,
+            )
+        return len(existing_map), existing_map
 
     sessions = question.get("haystack_sessions", [])
     session_ids = question.get("haystack_session_ids", [])
@@ -147,31 +221,45 @@ def ingest_question(question: dict, profile: str):
     all_texts = [r[0] for r in all_rows]
     embeddings = _with_retry(generate_embeddings_batch, all_texts)
 
+    # Drop rows where embedding generation returned None (Gemini occasionally
+    # fails on pathological content -- empty strings, specific unicode, rate
+    # limits that retry gave up on). Previously `str(None)` was serialised
+    # into the vector column and SQL rejected the entire batch.
+    valid_indices = [idx for idx, emb in enumerate(embeddings) if emb is not None]
+    skipped = len(embeddings) - len(valid_indices)
+    if skipped:
+        logger.warning(
+            "  Skipped %d/%d rounds where embedding generation returned None",
+            skipped,
+            len(embeddings),
+        )
+
     # Phase 3: Batch insert into database
-    backend = get_backend()
     memory_to_session = {}
     batch_size = 100
     stored_count = 0
 
-    for start in range(0, len(all_rows), batch_size):
-        end = min(start + batch_size, len(all_rows))
+    for start in range(0, len(valid_indices), batch_size):
+        end = min(start + batch_size, len(valid_indices))
         batch_rows = []
-        for idx in range(start, end):
-            content, tags, meta, session_id = all_rows[idx]
+        batch_source_rows = []
+        for vidx in valid_indices[start:end]:
+            content, tags, meta, session_id = all_rows[vidx]
             batch_rows.append(
                 {
                     "content": content,
-                    "embedding": str(embeddings[idx]),
+                    "embedding": str(embeddings[vidx]),
                     "profile": profile,
                     "source": "longmemeval",
                     "tags": tags,
                     "metadata": meta,
                 }
             )
+            batch_source_rows.append(all_rows[vidx])
 
         try:
             results = _with_retry(backend.store_memories_batch, batch_rows)
-            for r, row_data in zip(results, all_rows[start:end]):
+            for r, row_data in zip(results, batch_source_rows):
                 mem_id = r.get("id", "")
                 memory_to_session[mem_id] = row_data[3]  # session_id
             stored_count += len(results)
@@ -468,7 +556,16 @@ def main():
         help="Filter by question type (e.g. temporal-reasoning, multi-session)",
     )
     parser.add_argument("--cleanup", action="store_true", help="Delete benchmark profiles")
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Wipe each profile before ingesting (forces clean re-embed; slower "
+        "but the only way to get trustworthy retrieval metrics after a crashed run)",
+    )
     args = parser.parse_args()
+
+    if args.fresh:
+        os.environ["OGHAM_LME_FRESH"] = "1"
 
     # Ensure ogham is importable
     src_dir = Path(__file__).parent.parent / "src"

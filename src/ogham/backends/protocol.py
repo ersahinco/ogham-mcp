@@ -209,6 +209,62 @@ class DatabaseBackend(Protocol):
     def apply_hebbian_decay(self, profile: str, batch_size: int = 1000) -> int: ...
     def count_decay_eligible(self, profile: str) -> int: ...
 
+    # ── Lifecycle (v0.13.1 — migration 035 RPC parity) ────────────────
+
+    def lifecycle_advance_stages(
+        self,
+        profile: str,
+        cutoff_iso: str,
+        surprise_gate: float,
+        importance_gate: float,
+    ) -> int: ...
+
+    def lifecycle_close_editing_windows(
+        self,
+        profile: str,
+        cutoff_iso: str,
+    ) -> int: ...
+
+    def lifecycle_open_editing_window(
+        self,
+        memory_ids: list[str],
+    ) -> None: ...
+
+    def lifecycle_pipeline_counts(
+        self,
+        profile: str,
+    ) -> dict[str, int]: ...
+
+    # ── Hebbian co-retrieval edges (v0.13.1) ──────────────────────────
+
+    def hebbian_strengthen_edges(
+        self,
+        sources: list[str],
+        targets: list[str],
+        bootstrap: float,
+        rate: float,
+    ) -> int: ...
+
+    # ── Entity graph density signal (v0.13.1) ─────────────────────────
+
+    def entity_graph_density(
+        self,
+        profile: str,
+    ) -> tuple[float, float]: ...
+
+    """Returns (entity_count, edge_count) -- both as floats so callers can
+    compute density = edges / entities without re-casting."""
+
+    # ── Hidden-link suggestions (v0.13.1) ─────────────────────────────
+
+    def suggest_unlinked_by_shared_entities(
+        self,
+        memory_id: str,
+        profile: str,
+        min_shared: int,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
     # ── Audit ────────────────────────────────────────────────────────
 
     def emit_audit_event(
